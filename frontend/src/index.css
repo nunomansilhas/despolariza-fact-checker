@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-900 text-gray-100;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-600 rounded;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
+
+/* Verdict colors */
+.verdict-true { @apply text-green-400; }
+.verdict-partial { @apply text-yellow-400; }
+.verdict-false { @apply text-red-400; }
+.verdict-inconclusive { @apply text-gray-400; }
+
+/* Technique severity */
+.severity-low { @apply border-l-blue-400; }
+.severity-medium { @apply border-l-yellow-400; }
+.severity-high { @apply border-l-red-400; }
