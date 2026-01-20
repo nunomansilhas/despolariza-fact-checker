@@ -58,8 +58,16 @@ app.add_middleware(
 
 # --- Models ---
 
+class ChapterInput(BaseModel):
+    id: str
+    title: str
+    start_time: float
+    end_time: Optional[float] = None
+
+
 class StartSessionRequest(BaseModel):
     url: str
+    custom_chapters: Optional[list[ChapterInput]] = None
 
 
 class SessionResponse(BaseModel):
@@ -138,7 +146,20 @@ async def start_session(request: StartSessionRequest):
         raise HTTPException(status_code=500, detail="Orchestrator not initialized")
 
     try:
-        session = await orchestrator.start_session(request.url)
+        # Converter custom chapters para formato do orchestrator
+        custom_chapters = None
+        if request.custom_chapters:
+            custom_chapters = [
+                {
+                    "id": ch.id,
+                    "title": ch.title,
+                    "start_time": ch.start_time,
+                    "end_time": ch.end_time
+                }
+                for ch in request.custom_chapters
+            ]
+
+        session = await orchestrator.start_session(request.url, custom_chapters=custom_chapters)
 
         # Configurar broadcasts via WebSocket
         async def broadcast(event: str, data):
@@ -153,6 +174,7 @@ async def start_session(request: StartSessionRequest):
         orchestrator.on("rhetoric", lambda d: asyncio.create_task(broadcast("rhetoric", d)))
         orchestrator.on("chapter", lambda d: asyncio.create_task(broadcast("chapter", d)))
         orchestrator.on("progress", lambda d: asyncio.create_task(broadcast("progress", d)))
+        orchestrator.on("status", lambda d: asyncio.create_task(broadcast("status", d)))
         orchestrator.on("error", lambda d: asyncio.create_task(broadcast("error", d)))
         orchestrator.on("complete", lambda d: asyncio.create_task(broadcast("complete", d)))
 

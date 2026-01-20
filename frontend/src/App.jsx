@@ -55,6 +55,42 @@ function formatTime(seconds) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// Parser de cronologia manual
+function parseCronologia(text) {
+  const lines = text.trim().split('\n')
+  const chapters = []
+
+  for (const line of lines) {
+    // Match patterns like:
+    // "00:00:00 - Title"
+    // "00:00:00 – Title" (em dash)
+    // "00:00:00 Title"
+    // "0:00:00 - Title"
+    const match = line.trim().match(/^(\d{1,2}:\d{2}:\d{2})\s*[-–—]?\s*(.+)$/)
+    if (match) {
+      const [, timestamp, title] = match
+      const parts = timestamp.split(':').map(Number)
+      const seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+      chapters.push({
+        id: `ch_${chapters.length}`,
+        title: title.trim(),
+        start_time: seconds,
+        end_time: null
+      })
+    }
+  }
+
+  // Calculate end times
+  for (let i = 0; i < chapters.length; i++) {
+    if (i < chapters.length - 1) {
+      chapters[i].end_time = chapters[i + 1].start_time
+    }
+  }
+
+  return chapters
+}
+
 // Componente de Status
 function StatusBanner({ status }) {
   const stageInfo = {
@@ -101,7 +137,7 @@ function ChapterListItem({ chapter, isActive, isProcessing, transcriptCount, onC
           <div className="text-sm font-medium truncate">{chapter.title}</div>
           {transcriptCount > 0 && (
             <div className="text-xs text-gray-400 mt-1">
-              {transcriptCount} segmentos transcritos
+              {transcriptCount} segmentos
             </div>
           )}
         </div>
@@ -203,21 +239,106 @@ function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
   )
 }
 
+// Modal para input de cronologia
+function CronologiaModal({ isOpen, onClose, onSubmit, initialValue }) {
+  const [text, setText] = useState(initialValue || '')
+  const [preview, setPreview] = useState([])
+
+  useEffect(() => {
+    if (text) {
+      setPreview(parseCronologia(text))
+    } else {
+      setPreview([])
+    }
+  }, [text])
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-800 rounded-lg max-w-2xl w-full max-h-[80vh] flex flex-col">
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-lg font-bold">📑 Definir Cronologia</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        <div className="p-4 flex-1 overflow-hidden flex flex-col gap-4">
+          <div className="text-sm text-gray-400">
+            Cola a cronologia no formato:<br />
+            <code className="text-blue-400">00:00:00 - Título do capítulo</code>
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={`00:00:00 - Introdução
+00:05:30 - Tema 1
+00:15:00 - Tema 2
+...`}
+            className="flex-1 min-h-[200px] p-3 bg-gray-900 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+
+          {preview.length > 0 && (
+            <div className="bg-gray-900 rounded-lg p-3 max-h-[150px] overflow-y-auto">
+              <div className="text-xs text-gray-400 mb-2">Preview ({preview.length} capítulos):</div>
+              <div className="space-y-1">
+                {preview.slice(0, 10).map((ch, i) => (
+                  <div key={i} className="text-sm flex gap-2">
+                    <span className="text-gray-500 font-mono">{formatTime(ch.start_time)}</span>
+                    <span className="text-gray-300">{ch.title}</span>
+                  </div>
+                ))}
+                {preview.length > 10 && (
+                  <div className="text-gray-500 text-xs">... e mais {preview.length - 10} capítulos</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-700 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => {
+              onSubmit(preview)
+              onClose()
+            }}
+            disabled={preview.length === 0}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded-lg"
+          >
+            Usar esta cronologia ({preview.length})
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // App Principal
 export default function App() {
   const [url, setUrl] = useState('')
   const [session, setSession] = useState(null)
   const [transcripts, setTranscripts] = useState([])
   const [chapters, setChapters] = useState([])
+  const [customChapters, setCustomChapters] = useState(null) // Cronologia definida pelo user
   const [selectedChapter, setSelectedChapter] = useState(null)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0, totalChunks: 0 })
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showCronologiaModal, setShowCronologiaModal] = useState(false)
 
   const { messages, isConnected } = useWebSocket(
     `ws://${window.location.hostname}:3068/ws`
   )
+
+  // Usar custom chapters se definidos, senão usar os do servidor
+  const activeChapters = customChapters || chapters
 
   // Processar mensagens do WebSocket
   useEffect(() => {
@@ -230,7 +351,10 @@ export default function App() {
         setTranscripts(prev => [...prev, lastMessage.data])
         break
       case 'chapter':
-        setChapters(prev => [...prev, lastMessage.data])
+        // Só adicionar se não tivermos custom chapters
+        if (!customChapters) {
+          setChapters(prev => [...prev, lastMessage.data])
+        }
         break
       case 'progress':
         setProgress({
@@ -253,35 +377,35 @@ export default function App() {
         setStatus(null)
         break
     }
-  }, [messages])
+  }, [messages, customChapters])
 
   // Calcular contagem de transcrições por capítulo
   const chapterTranscriptCounts = useMemo(() => {
     const counts = {}
-    chapters.forEach((ch, idx) => {
-      const nextStart = idx < chapters.length - 1 ? chapters[idx + 1].start_time : Infinity
+    activeChapters.forEach((ch, idx) => {
+      const nextStart = idx < activeChapters.length - 1 ? activeChapters[idx + 1].start_time : Infinity
       counts[ch.id] = transcripts.filter(t =>
         t.start_time >= ch.start_time && t.start_time < nextStart
       ).length
     })
     return counts
-  }, [chapters, transcripts])
+  }, [activeChapters, transcripts])
 
   // Encontrar próximo capítulo
   const getNextChapterStart = (chapter) => {
-    const idx = chapters.findIndex(c => c.id === chapter?.id)
-    if (idx >= 0 && idx < chapters.length - 1) {
-      return chapters[idx + 1].start_time
+    const idx = activeChapters.findIndex(c => c.id === chapter?.id)
+    if (idx >= 0 && idx < activeChapters.length - 1) {
+      return activeChapters[idx + 1].start_time
     }
     return null
   }
 
   // Auto-selecionar primeiro capítulo quando carregar
   useEffect(() => {
-    if (chapters.length > 0 && !selectedChapter) {
-      setSelectedChapter(chapters[0])
+    if (activeChapters.length > 0 && !selectedChapter) {
+      setSelectedChapter(activeChapters[0])
     }
-  }, [chapters, selectedChapter])
+  }, [activeChapters, selectedChapter])
 
   const handleStart = async () => {
     if (!url.trim()) return
@@ -297,7 +421,10 @@ export default function App() {
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({
+          url,
+          custom_chapters: customChapters // Enviar cronologia custom se existir
+        })
       })
 
       if (!response.ok) {
@@ -343,6 +470,11 @@ export default function App() {
     }
   }
 
+  const handleSetCronologia = (chapters) => {
+    setCustomChapters(chapters)
+    setSelectedChapter(chapters[0] || null)
+  }
+
   const progressPercent = progress.total > 0
     ? Math.min(100, (progress.current / progress.total) * 100)
     : 0
@@ -364,6 +496,15 @@ export default function App() {
               disabled={loading || session?.status === 'running'}
               onKeyDown={(e) => e.key === 'Enter' && handleStart()}
             />
+
+            <button
+              onClick={() => setShowCronologiaModal(true)}
+              disabled={session?.status === 'running'}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 rounded-lg font-medium transition"
+              title="Definir cronologia manual"
+            >
+              📑 {customChapters ? `(${customChapters.length})` : ''}
+            </button>
 
             {!session || session.status !== 'running' ? (
               <button
@@ -396,6 +537,24 @@ export default function App() {
           <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
                title={isConnected ? 'Conectado' : 'Desconectado'} />
         </div>
+
+        {/* Custom chapters indicator */}
+        {customChapters && (
+          <div className="max-w-7xl mx-auto mt-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-purple-400">📑 Cronologia manual: {customChapters.length} capítulos</span>
+              <button
+                onClick={() => {
+                  setCustomChapters(null)
+                  setSelectedChapter(null)
+                }}
+                className="text-gray-400 hover:text-red-400 text-xs"
+              >
+                (limpar)
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Progress bar */}
         {session && progress.total > 0 && (
@@ -450,12 +609,15 @@ export default function App() {
         {/* Chapters sidebar - CRONOLOGIA */}
         <div className="w-80 bg-gray-900 border-r border-gray-700 flex flex-col">
           <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-            <h2 className="font-medium">📑 CRONOLOGIA</h2>
-            <span className="text-sm text-gray-400">{chapters.length} temas</span>
+            <h2 className="font-medium">
+              📑 CRONOLOGIA
+              {customChapters && <span className="text-purple-400 text-xs ml-1">(manual)</span>}
+            </h2>
+            <span className="text-sm text-gray-400">{activeChapters.length} temas</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {chapters.length > 0 ? (
-              chapters.map((ch, idx) => (
+            {activeChapters.length > 0 ? (
+              activeChapters.map((ch, idx) => (
                 <ChapterListItem
                   key={ch.id}
                   chapter={ch}
@@ -467,7 +629,13 @@ export default function App() {
               ))
             ) : (
               <div className="text-gray-500 text-center py-8 text-sm">
-                {session ? 'A extrair cronologia...' : 'Introduz um URL para começar'}
+                <button
+                  onClick={() => setShowCronologiaModal(true)}
+                  className="text-purple-400 hover:text-purple-300 underline"
+                >
+                  Clica para definir cronologia
+                </button>
+                <div className="mt-2 text-gray-600">ou introduz URL para auto-detetar</div>
               </div>
             )}
           </div>
@@ -475,7 +643,7 @@ export default function App() {
           {/* Stats no fundo */}
           {transcripts.length > 0 && (
             <div className="p-3 bg-gray-800 border-t border-gray-700 text-xs text-gray-400">
-              <div>Total: {transcripts.length} segmentos transcritos</div>
+              <div>Total: {transcripts.length} segmentos</div>
               <div>{transcripts.reduce((acc, t) => acc + t.text.length, 0).toLocaleString()} caracteres</div>
             </div>
           )}
@@ -493,8 +661,16 @@ export default function App() {
 
       {/* Footer */}
       <footer className="bg-gray-800 p-2 text-center text-xs text-gray-500">
-        Despolariza Transcriber v0.2.0 | Transcrição por capítulos usando Whisper
+        Despolariza Transcriber v0.3.0 | Transcrição por capítulos usando Whisper
       </footer>
+
+      {/* Modal de cronologia */}
+      <CronologiaModal
+        isOpen={showCronologiaModal}
+        onClose={() => setShowCronologiaModal(false)}
+        onSubmit={handleSetCronologia}
+        initialValue=""
+      />
     </div>
   )
 }

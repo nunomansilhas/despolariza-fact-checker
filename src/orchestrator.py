@@ -114,12 +114,14 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Callback error for {event}: {e}")
 
-    async def start_session(self, url: str) -> SessionState:
+    async def start_session(self, url: str, custom_chapters: list[dict] = None) -> SessionState:
         """
         Inicia uma nova sessão de análise.
 
         Args:
             url: URL do vídeo do YouTube
+            custom_chapters: Lista de capítulos customizados (opcional)
+                            Formato: [{"id": "ch_0", "title": "...", "start_time": 0, "end_time": 60}, ...]
 
         Returns:
             SessionState com informação da sessão
@@ -141,39 +143,65 @@ class Orchestrator:
             self._capture = YouTubeCapture(url)
             self._session.video_info = await self._capture.get_video_info()
 
-            await self._notify("status", {"stage": "parsing_chapters", "message": "A extrair cronologia da descrição..."})
+            # Usar capítulos customizados se fornecidos
+            if custom_chapters:
+                await self._notify("status", {"stage": "parsing_chapters", "message": "A usar cronologia manual..."})
+                logger.info(f"Using {len(custom_chapters)} custom chapters")
 
-            # Extrair capítulos da descrição (CRONOLOGIA)
-            description_chapters = extract_chapters_smart(
-                self._session.video_info.description,
-                self._session.video_info.duration
-            )
+                for ch in custom_chapters:
+                    # Calcular end_time se não fornecido (para último capítulo)
+                    end_time = ch.get("end_time")
+                    if end_time is None:
+                        # Procurar próximo capítulo ou usar duração do vídeo
+                        idx = custom_chapters.index(ch)
+                        if idx < len(custom_chapters) - 1:
+                            end_time = custom_chapters[idx + 1]["start_time"]
+                        else:
+                            end_time = self._session.video_info.duration
 
-            if description_chapters:
-                logger.info(f"Found {len(description_chapters)} chapters in description")
-                for i, ch in enumerate(description_chapters):
                     chapter = Chapter(
-                        id=f"ch_{i}",
-                        title=ch.title,
-                        start_time=ch.start_time,
-                        end_time=ch.end_time,
-                        detected_by="description"
+                        id=ch["id"],
+                        title=ch["title"],
+                        start_time=ch["start_time"],
+                        end_time=end_time,
+                        detected_by="manual"
                     )
                     self._session.chapters.append(chapter)
                     await self._notify("chapter", chapter)
             else:
-                # Fallback: usar capítulos do vídeo (se existirem)
-                logger.info("No chapters in description, checking video metadata...")
-                for i, ch in enumerate(self._session.video_info.chapters):
-                    chapter = Chapter(
-                        id=f"ch_{i}",
-                        title=ch.get("title", f"Capítulo {i+1}"),
-                        start_time=ch.get("start_time", 0),
-                        end_time=ch.get("end_time"),
-                        detected_by="video"
-                    )
-                    self._session.chapters.append(chapter)
-                    await self._notify("chapter", chapter)
+                await self._notify("status", {"stage": "parsing_chapters", "message": "A extrair cronologia da descrição..."})
+
+                # Extrair capítulos da descrição (CRONOLOGIA)
+                description_chapters = extract_chapters_smart(
+                    self._session.video_info.description,
+                    self._session.video_info.duration
+                )
+
+                if description_chapters:
+                    logger.info(f"Found {len(description_chapters)} chapters in description")
+                    for i, ch in enumerate(description_chapters):
+                        chapter = Chapter(
+                            id=f"ch_{i}",
+                            title=ch.title,
+                            start_time=ch.start_time,
+                            end_time=ch.end_time,
+                            detected_by="description"
+                        )
+                        self._session.chapters.append(chapter)
+                        await self._notify("chapter", chapter)
+                else:
+                    # Fallback: usar capítulos do vídeo (se existirem)
+                    logger.info("No chapters in description, checking video metadata...")
+                    for i, ch in enumerate(self._session.video_info.chapters):
+                        chapter = Chapter(
+                            id=f"ch_{i}",
+                            title=ch.get("title", f"Capítulo {i+1}"),
+                            start_time=ch.get("start_time", 0),
+                            end_time=ch.get("end_time"),
+                            detected_by="video"
+                        )
+                        self._session.chapters.append(chapter)
+                        await self._notify("chapter", chapter)
 
             if not self._session.chapters:
                 logger.warning("No chapters found, will process entire video")
