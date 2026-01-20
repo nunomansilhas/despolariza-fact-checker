@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # WebSocket
     ws_host: str = "0.0.0.0"
-    ws_port: int = 3067
+    ws_port: int = 3068
 
     # Chapter Detection
     silence_threshold: float = -40.0  # dB
