@@ -254,7 +254,22 @@ async def get_session_data():
         raise HTTPException(status_code=500, detail="Orchestrator not initialized")
 
     session = orchestrator.get_session_state()
+
+    # Se não há sessão activa, tentar carregar do auto-save
     if not session:
+        autosave = orchestrator.load_autosave()
+        if autosave:
+            return {
+                "session_id": autosave.get("session_id"),
+                "status": autosave.get("status", "recovered"),
+                "video_title": autosave.get("video_info", {}).get("title") if autosave.get("video_info") else None,
+                "video_duration": autosave.get("video_info", {}).get("duration") if autosave.get("video_info") else None,
+                "current_time": autosave.get("current_time", 0),
+                "chunks_processed": autosave.get("chunks_processed", 0),
+                "transcripts": autosave.get("transcripts", []),
+                "chapters": autosave.get("chapters", []),
+                "recovered_from_autosave": True
+            }
         raise HTTPException(status_code=404, detail="No active session")
 
     return {

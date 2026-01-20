@@ -1,6 +1,8 @@
 """Orchestrator - coordena os agentes e o fluxo de dados."""
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -76,6 +78,75 @@ class Orchestrator:
     def _setup_agent_callbacks(self):
         """Configura callbacks dos agentes (para processamento em background)."""
         pass  # Agora processamos síncronamente no _process_video
+
+    def _get_autosave_path(self) -> Path:
+        """Retorna o caminho para o ficheiro de auto-save."""
+        return Path("data") / "session_autosave.json"
+
+    def _autosave(self):
+        """Guarda sessão atual em ficheiro para recuperação."""
+        if not self._session:
+            return
+
+        try:
+            save_path = self._get_autosave_path()
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+
+            data = {
+                "session_id": self._session.id,
+                "url": self._session.url,
+                "status": self._session.status,
+                "video_info": {
+                    "title": self._session.video_info.title if self._session.video_info else None,
+                    "duration": self._session.video_info.duration if self._session.video_info else None,
+                } if self._session.video_info else None,
+                "current_time": self._session.current_time,
+                "chunks_processed": self._session.chunks_processed,
+                "transcripts": [
+                    {
+                        "chunk_id": t.chunk_id,
+                        "text": t.text,
+                        "start_time": t.start_time,
+                        "end_time": t.end_time,
+                        "confidence": t.confidence,
+                        "segments": [
+                            {"start": s.start, "end": s.end, "text": s.text}
+                            for s in (t.segments or [])
+                        ]
+                    }
+                    for t in self._session.transcripts
+                ],
+                "chapters": [
+                    {
+                        "id": c.id,
+                        "title": c.title,
+                        "start_time": c.start_time,
+                        "end_time": c.end_time,
+                        "detected_by": c.detected_by
+                    }
+                    for c in self._session.chapters
+                ],
+                "saved_at": datetime.now().isoformat()
+            }
+
+            with open(save_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            logger.debug(f"Auto-saved session: {self._session.chunks_processed} chunks")
+
+        except Exception as e:
+            logger.error(f"Auto-save error: {e}")
+
+    def load_autosave(self) -> Optional[dict]:
+        """Carrega sessão de ficheiro se existir."""
+        try:
+            save_path = self._get_autosave_path()
+            if save_path.exists():
+                with open(save_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading autosave: {e}")
+        return None
 
     async def _process_fact_check(self, transcript: TranscriptChunk):
         """Processa fact-check em background."""
@@ -270,6 +341,10 @@ class Orchestrator:
                     self._session.transcripts.append(transcript)
                     await self._notify("transcript", transcript)
 
+                    # Auto-save a cada 5 chunks
+                    if self._session.chunks_processed % 5 == 0:
+                        self._autosave()
+
                     # Enviar para análise (fact-check e retórica) em paralelo
                     if settings.fact_check_enabled:
                         asyncio.create_task(self._process_fact_check(transcript))
@@ -300,6 +375,11 @@ class Orchestrator:
 
             self._session.status = "completed"
             self._session.completed_at = datetime.now()
+
+            # Auto-save final
+            self._autosave()
+            logger.info(f"Session auto-saved: {self._session.chunks_processed} chunks")
+
             await self._notify("complete", self._session)
 
             # Limpar ficheiros temporários após processamento completo
