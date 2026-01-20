@@ -340,6 +340,53 @@ export default function App() {
   // Usar custom chapters se definidos, senão usar os do servidor
   const activeChapters = customChapters || chapters
 
+  // Carregar dados existentes da sessão ao conectar
+  const loadExistingSession = useCallback(async () => {
+    try {
+      const response = await fetch('/api/session/data')
+      if (response.ok) {
+        const data = await response.json()
+        console.log('Loaded existing session:', data.chunks_processed, 'chunks')
+
+        setSession({
+          session_id: data.session_id,
+          status: data.status,
+          video_title: data.video_title,
+          video_duration: data.video_duration
+        })
+
+        if (data.transcripts && data.transcripts.length > 0) {
+          setTranscripts(data.transcripts)
+        }
+
+        if (data.chapters && data.chapters.length > 0 && !customChapters) {
+          setChapters(data.chapters)
+        }
+
+        setProgress({
+          current: data.current_time || 0,
+          total: data.video_duration || 0,
+          chunksProcessed: data.chunks_processed || 0
+        })
+      }
+    } catch (e) {
+      // Sem sessão ativa - ok
+      console.log('No existing session')
+    }
+  }, [customChapters])
+
+  // Carregar sessão existente ao montar e ao reconectar
+  useEffect(() => {
+    loadExistingSession()
+  }, [loadExistingSession])
+
+  // Recarregar quando WebSocket reconecta
+  useEffect(() => {
+    if (isConnected) {
+      loadExistingSession()
+    }
+  }, [isConnected, loadExistingSession])
+
   // Processar mensagens do WebSocket
   useEffect(() => {
     if (messages.length === 0) return

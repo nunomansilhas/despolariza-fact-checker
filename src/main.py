@@ -247,6 +247,28 @@ async def get_transcript():
     return {"transcript": text}
 
 
+@app.get("/api/session/data")
+async def get_session_data():
+    """Obtém todos os dados da sessão (transcripts, chapters, etc.)."""
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    session = orchestrator.get_session_state()
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session")
+
+    return {
+        "session_id": session.id,
+        "status": session.status,
+        "video_title": session.video_info.title if session.video_info else None,
+        "video_duration": session.video_info.duration if session.video_info else None,
+        "current_time": session.current_time,
+        "chunks_processed": session.chunks_processed,
+        "transcripts": [_serialize(t) for t in session.transcripts],
+        "chapters": [_serialize(c) for c in session.chapters],
+    }
+
+
 # --- WebSocket ---
 
 @app.websocket("/ws")
