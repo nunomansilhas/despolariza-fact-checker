@@ -154,6 +154,13 @@ class Orchestrator:
             await self.fact_checker.start()
             await self.rhetoric_analyzer.start()
 
+            # Preload Whisper model BEFORE processing starts
+            # This can take several minutes for large models (downloading ~3GB)
+            # If we don't preload, chunks may be deleted before transcription starts
+            logger.info("Preloading Whisper model (this may take a few minutes on first run)...")
+            await self.transcriber.load_model()
+            logger.info("Whisper model ready!")
+
             self._session.status = "running"
             logger.info(f"Session {self._session.id} started for: {self._session.video_info.title}")
 

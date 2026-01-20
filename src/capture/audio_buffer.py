@@ -24,11 +24,11 @@ class AudioBuffer:
 
     def add(self, chunk: AudioChunk):
         """Adiciona um chunk ao buffer."""
-        # Se buffer está cheio, o mais antigo é removido automaticamente
-        if len(self._buffer) == self.max_size:
-            old_chunk = self._buffer[0]
-            self._cleanup_chunk(old_chunk)
-
+        # NOTE: We don't delete chunk files when the buffer rotates anymore.
+        # Files remain in the temp directory until the transcriber processes them.
+        # The temp directory cleanup at session end handles all files.
+        # This is important because transcription can be slow (especially on first run
+        # when the Whisper model needs to be downloaded).
         self._buffer.append(chunk)
         logger.debug(f"Buffer: added chunk {chunk.chunk_id}, size: {len(self._buffer)}")
 

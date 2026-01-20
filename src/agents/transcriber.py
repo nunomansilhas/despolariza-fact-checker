@@ -1,6 +1,7 @@
 """Agente de transcrição usando Whisper."""
 
 import asyncio
+import math
 from pathlib import Path
 from typing import Optional
 import logging
@@ -100,11 +101,17 @@ class TranscriberAgent(BaseAgent):
         full_text_parts = []
 
         for segment in segments_data:
+            # Convert log probability to probability (0-1 range)
+            # avg_logprob is typically negative, e.g., -0.3
+            # exp(-0.3) ≈ 0.74, exp(-1) ≈ 0.37, exp(0) = 1
+            raw_logprob = segment.avg_logprob if hasattr(segment, 'avg_logprob') else -0.1
+            confidence = max(0.0, min(1.0, math.exp(raw_logprob)))
+
             seg = TranscriptSegment(
                 text=segment.text.strip(),
                 start=start_time + segment.start,
                 end=start_time + segment.end,
-                confidence=segment.avg_logprob if hasattr(segment, 'avg_logprob') else 0.9
+                confidence=confidence
             )
             segments.append(seg)
             full_text_parts.append(segment.text.strip())
