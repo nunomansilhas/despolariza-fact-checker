@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 // Hook para WebSocket
 function useWebSocket(url) {
@@ -22,7 +22,6 @@ function useWebSocket(url) {
     ws.onclose = () => {
       setIsConnected(false)
       console.log('WebSocket disconnected')
-      // Reconectar após 3s
       setTimeout(connect, 3000)
     }
 
@@ -42,13 +41,7 @@ function useWebSocket(url) {
     }
   }, [connect])
 
-  const send = useCallback((data) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data))
-    }
-  }, [])
-
-  return { messages, isConnected, send }
+  return { messages, isConnected }
 }
 
 // Formatar tempo em HH:MM:SS ou MM:SS
@@ -64,153 +57,148 @@ function formatTime(seconds) {
 
 // Componente de Status
 function StatusBanner({ status }) {
-  const stageEmoji = {
-    'fetching_info': '🔍',
-    'parsing_chapters': '📑',
-    'loading_model': '🧠',
-    'model_ready': '✓',
-    'downloading': '📥',
-    'transcribing': '🎤',
+  const stageInfo = {
+    'fetching_info': { emoji: '🔍', color: 'bg-blue-900/50' },
+    'parsing_chapters': { emoji: '📑', color: 'bg-blue-900/50' },
+    'loading_model': { emoji: '🧠', color: 'bg-yellow-900/50' },
+    'model_ready': { emoji: '✓', color: 'bg-green-900/50' },
+    'downloading': { emoji: '📥', color: 'bg-orange-900/50' },
+    'transcribing': { emoji: '🎤', color: 'bg-purple-900/50' },
   }
 
   if (!status) return null
 
+  const info = stageInfo[status.stage] || { emoji: '⏳', color: 'bg-gray-900/50' }
+
   return (
-    <div className="bg-blue-900/50 text-blue-200 px-4 py-2 flex items-center gap-2 animate-pulse">
-      <span>{stageEmoji[status.stage] || '⏳'}</span>
+    <div className={`${info.color} text-gray-200 px-4 py-2 flex items-center gap-2`}>
+      <span className="animate-pulse">{info.emoji}</span>
       <span>{status.message}</span>
     </div>
   )
 }
 
-// Componente de Capítulo/Cronologia
-function ChapterItem({ chapter, isActive, onClick }) {
+// Componente de Capítulo na sidebar
+function ChapterListItem({ chapter, isActive, isProcessing, transcriptCount, onClick }) {
   return (
     <div
       onClick={onClick}
-      className={`p-2 rounded cursor-pointer transition ${
+      className={`p-3 rounded-lg cursor-pointer transition border-l-4 ${
         isActive
-          ? 'bg-blue-600 text-white'
-          : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+          ? 'bg-blue-600 border-l-blue-400 text-white'
+          : isProcessing
+          ? 'bg-yellow-900/30 border-l-yellow-500 text-yellow-200'
+          : transcriptCount > 0
+          ? 'bg-gray-800 border-l-green-500 hover:bg-gray-700 text-gray-200'
+          : 'bg-gray-800/50 border-l-gray-600 hover:bg-gray-700 text-gray-400'
       }`}
     >
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-mono text-gray-400">
+      <div className="flex items-start gap-2">
+        <span className="text-xs font-mono text-gray-400 mt-0.5">
           {formatTime(chapter.start_time)}
         </span>
-        <span className="text-sm flex-1 truncate">{chapter.title}</span>
-      </div>
-    </div>
-  )
-}
-
-// Componente de Fact-Check
-function FactCheckItem({ factCheck }) {
-  const verdictEmoji = {
-    true: '✅',
-    partial: '⚠️',
-    false: '❌',
-    inconclusive: '❓',
-    pending: '⏳'
-  }
-
-  const verdictClass = {
-    true: 'border-l-green-500',
-    partial: 'border-l-yellow-500',
-    false: 'border-l-red-500',
-    inconclusive: 'border-l-gray-500',
-    pending: 'border-l-gray-600'
-  }
-
-  return (
-    <div className={`bg-gray-800 p-3 rounded-lg mb-2 border-l-4 ${verdictClass[factCheck.verdict] || 'border-l-gray-600'}`}>
-      <div className="flex items-start gap-2">
-        <span className="text-xl">{verdictEmoji[factCheck.verdict] || '❓'}</span>
-        <div className="flex-1">
-          <p className="font-medium text-gray-200">
-            {factCheck.claim?.text}
-          </p>
-          {factCheck.explanation && (
-            <p className="text-sm text-gray-400 mt-1">{factCheck.explanation}</p>
-          )}
-          {factCheck.sources?.length > 0 && (
-            <p className="text-xs text-gray-500 mt-1">
-              Fontes: {factCheck.sources.join(', ')}
-            </p>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium truncate">{chapter.title}</div>
+          {transcriptCount > 0 && (
+            <div className="text-xs text-gray-400 mt-1">
+              {transcriptCount} segmentos transcritos
+            </div>
           )}
         </div>
+        {isProcessing && (
+          <span className="animate-pulse text-yellow-400">●</span>
+        )}
       </div>
     </div>
   )
 }
 
-// Componente de Técnica Retórica
-function RhetoricItem({ technique }) {
-  const severityColors = {
-    low: 'border-l-blue-500 bg-blue-900/20',
-    medium: 'border-l-yellow-500 bg-yellow-900/20',
-    high: 'border-l-red-500 bg-red-900/20'
-  }
-
-  return (
-    <div className={`p-3 rounded-lg mb-2 border-l-4 ${severityColors[technique.severity] || 'border-l-gray-600 bg-gray-800'}`}>
-      <div className="font-medium text-blue-400">{technique.type}</div>
-      <p className="text-sm text-gray-300 mt-1 italic">"{technique.quote}"</p>
-      {technique.explanation && (
-        <p className="text-xs text-gray-500 mt-1">{technique.explanation}</p>
-      )}
-    </div>
-  )
-}
-
-// Componente de Transcrição
-function TranscriptPanel({ transcripts, chapters }) {
+// Painel de Transcrição de um Capítulo
+function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
   const scrollRef = useRef(null)
+
+  // Filtrar transcrições deste capítulo
+  const chapterTranscripts = useMemo(() => {
+    if (!chapter) return []
+    const endTime = nextChapterStart || Infinity
+    return transcripts.filter(t =>
+      t.start_time >= chapter.start_time && t.start_time < endTime
+    )
+  }, [chapter, transcripts, nextChapterStart])
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [transcripts])
+  }, [chapterTranscripts])
 
-  // Agrupar transcrições por capítulo
-  const getChapterForTime = (time) => {
-    for (let i = chapters.length - 1; i >= 0; i--) {
-      if (time >= chapters[i].start_time) {
-        return chapters[i]
-      }
-    }
-    return null
+  if (!chapter) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-500">
+        <div className="text-center">
+          <div className="text-4xl mb-2">📑</div>
+          <div>Seleciona um capítulo para ver a transcrição</div>
+        </div>
+      </div>
+    )
   }
 
-  return (
-    <div ref={scrollRef} className="h-full overflow-y-auto p-4 space-y-2">
-      {transcripts.map((t, i) => {
-        const chapter = getChapterForTime(t.start_time)
-        const prevChapter = i > 0 ? getChapterForTime(transcripts[i-1].start_time) : null
-        const showChapterHeader = chapter && (!prevChapter || chapter.id !== prevChapter?.id)
+  // Juntar todo o texto do capítulo
+  const fullText = chapterTranscripts.map(t => t.text).join(' ')
 
-        return (
-          <div key={i}>
-            {showChapterHeader && (
-              <div className="bg-blue-900/30 px-3 py-1 rounded-lg mb-2 mt-4 first:mt-0">
-                <span className="text-blue-400 font-medium text-sm">
-                  📌 {chapter.title}
-                </span>
-              </div>
-            )}
-            <div className="flex gap-3">
-              <span className="text-xs text-gray-500 whitespace-nowrap font-mono">
-                {formatTime(t.start_time)}
-              </span>
-              <p className="text-sm text-gray-300">{t.text}</p>
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header do capítulo */}
+      <div className="p-4 bg-gray-800 border-b border-gray-700">
+        <div className="flex items-center gap-2 text-sm text-gray-400 mb-1">
+          <span>{formatTime(chapter.start_time)}</span>
+          {nextChapterStart && (
+            <>
+              <span>→</span>
+              <span>{formatTime(nextChapterStart)}</span>
+            </>
+          )}
+        </div>
+        <h2 className="text-lg font-bold text-blue-400">{chapter.title}</h2>
+        <div className="text-xs text-gray-500 mt-1">
+          {chapterTranscripts.length} segmentos | {fullText.length} caracteres
+        </div>
+      </div>
+
+      {/* Texto completo do capítulo */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        {chapterTranscripts.length > 0 ? (
+          <div className="space-y-4">
+            {/* Texto contínuo */}
+            <div className="bg-gray-800/50 rounded-lg p-4">
+              <p className="text-gray-200 leading-relaxed whitespace-pre-wrap">
+                {fullText}
+              </p>
             </div>
+
+            {/* Timeline detalhada */}
+            <details className="group">
+              <summary className="cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                Ver timeline detalhada ({chapterTranscripts.length} segmentos)
+              </summary>
+              <div className="mt-2 space-y-1 pl-2 border-l-2 border-gray-700">
+                {chapterTranscripts.map((t, i) => (
+                  <div key={i} className="flex gap-3 py-1">
+                    <span className="text-xs text-gray-500 whitespace-nowrap font-mono">
+                      {formatTime(t.start_time)}
+                    </span>
+                    <p className="text-sm text-gray-400">{t.text}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
-        )
-      })}
-      {transcripts.length === 0 && (
-        <p className="text-gray-500 text-center">A aguardar transcrição...</p>
-      )}
+        ) : (
+          <div className="text-gray-500 text-center py-8">
+            <div className="animate-pulse">A aguardar transcrição deste capítulo...</div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -220,15 +208,14 @@ export default function App() {
   const [url, setUrl] = useState('')
   const [session, setSession] = useState(null)
   const [transcripts, setTranscripts] = useState([])
-  const [factChecks, setFactChecks] = useState([])
-  const [rhetoricTechniques, setRhetoricTechniques] = useState([])
   const [chapters, setChapters] = useState([])
+  const [selectedChapter, setSelectedChapter] = useState(null)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0, totalChunks: 0 })
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const { messages, isConnected, send } = useWebSocket(
+  const { messages, isConnected } = useWebSocket(
     `ws://${window.location.hostname}:3068/ws`
   )
 
@@ -241,14 +228,6 @@ export default function App() {
     switch (lastMessage.type) {
       case 'transcript':
         setTranscripts(prev => [...prev, lastMessage.data])
-        break
-      case 'fact_check':
-        setFactChecks(prev => [...prev, lastMessage.data])
-        break
-      case 'rhetoric':
-        if (lastMessage.data.techniques) {
-          setRhetoricTechniques(prev => [...prev, ...lastMessage.data.techniques])
-        }
         break
       case 'chapter':
         setChapters(prev => [...prev, lastMessage.data])
@@ -276,15 +255,42 @@ export default function App() {
     }
   }, [messages])
 
+  // Calcular contagem de transcrições por capítulo
+  const chapterTranscriptCounts = useMemo(() => {
+    const counts = {}
+    chapters.forEach((ch, idx) => {
+      const nextStart = idx < chapters.length - 1 ? chapters[idx + 1].start_time : Infinity
+      counts[ch.id] = transcripts.filter(t =>
+        t.start_time >= ch.start_time && t.start_time < nextStart
+      ).length
+    })
+    return counts
+  }, [chapters, transcripts])
+
+  // Encontrar próximo capítulo
+  const getNextChapterStart = (chapter) => {
+    const idx = chapters.findIndex(c => c.id === chapter?.id)
+    if (idx >= 0 && idx < chapters.length - 1) {
+      return chapters[idx + 1].start_time
+    }
+    return null
+  }
+
+  // Auto-selecionar primeiro capítulo quando carregar
+  useEffect(() => {
+    if (chapters.length > 0 && !selectedChapter) {
+      setSelectedChapter(chapters[0])
+    }
+  }, [chapters, selectedChapter])
+
   const handleStart = async () => {
     if (!url.trim()) return
 
     setLoading(true)
     setError(null)
     setTranscripts([])
-    setFactChecks([])
-    setRhetoricTechniques([])
     setChapters([])
+    setSelectedChapter(null)
     setStatus({ stage: 'fetching_info', message: 'A iniciar...' })
 
     try {
@@ -326,12 +332,12 @@ export default function App() {
       const text = await response.text()
 
       const blob = new Blob([text], { type: 'text/markdown' })
-      const url = URL.createObjectURL(blob)
+      const exportUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url
+      a.href = exportUrl
       a.download = 'analysis.md'
       a.click()
-      URL.revokeObjectURL(url)
+      URL.revokeObjectURL(exportUrl)
     } catch (e) {
       setError(e.message)
     }
@@ -342,11 +348,11 @@ export default function App() {
     : 0
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-gray-900 text-gray-100">
       {/* Header */}
       <header className="bg-gray-800 p-4 shadow-lg">
         <div className="max-w-7xl mx-auto flex items-center gap-4">
-          <h1 className="text-xl font-bold">🔍 Despolariza Analyzer</h1>
+          <h1 className="text-xl font-bold">📑 Despolariza Transcriber</h1>
 
           <div className="flex-1 flex gap-2">
             <input
@@ -365,7 +371,7 @@ export default function App() {
                 disabled={loading || !url.trim()}
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded-lg font-medium transition"
               >
-                {loading ? 'A iniciar...' : 'Analisar'}
+                {loading ? 'A iniciar...' : 'Transcrever'}
               </button>
             ) : (
               <button
@@ -376,7 +382,7 @@ export default function App() {
               </button>
             )}
 
-            {session && (
+            {transcripts.length > 0 && (
               <button
                 onClick={handleExport}
                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
@@ -405,14 +411,9 @@ export default function App() {
                 {formatTime(progress.current)} / {formatTime(progress.total)}
               </span>
               <span className="text-xs text-gray-500">
-                (chunk {progress.chunksProcessed}{progress.totalChunks ? ` / ${progress.totalChunks}` : ''})
+                ({progress.chunksProcessed}{progress.totalChunks ? ` / ${progress.totalChunks}` : ''})
               </span>
             </div>
-            {progress.currentChapter && (
-              <div className="text-xs text-gray-400 mt-1">
-                📌 {progress.currentChapter}
-              </div>
-            )}
           </div>
         )}
       </header>
@@ -430,7 +431,7 @@ export default function App() {
 
       {/* Session info */}
       {session && (
-        <div className="bg-gray-800 px-4 py-2 border-b border-gray-700">
+        <div className="bg-gray-800/50 px-4 py-2 border-b border-gray-700">
           <div className="max-w-7xl mx-auto flex items-center gap-4 text-sm">
             <span className="text-gray-400 truncate flex-1">📺 {session.video_title}</span>
             <span className={`px-2 py-0.5 rounded text-xs ${
@@ -446,78 +447,53 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Chapters sidebar */}
-        {chapters.length > 0 && (
-          <div className="w-64 bg-gray-900 border-r border-gray-700 flex flex-col">
-            <div className="p-3 bg-gray-800 border-b border-gray-700">
-              <h2 className="font-medium text-sm">📑 Cronologia ({chapters.length})</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {chapters.map((ch, i) => (
-                <ChapterItem
-                  key={i}
-                  chapter={ch}
-                  isActive={progress.currentChapter === ch.title}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Transcription panel */}
-        <div className="flex-1 border-r border-gray-700 flex flex-col">
+        {/* Chapters sidebar - CRONOLOGIA */}
+        <div className="w-80 bg-gray-900 border-r border-gray-700 flex flex-col">
           <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-            <h2 className="font-medium">📝 Transcrição</h2>
-            <span className="text-sm text-gray-400">{transcripts.length} segmentos</span>
+            <h2 className="font-medium">📑 CRONOLOGIA</h2>
+            <span className="text-sm text-gray-400">{chapters.length} temas</span>
           </div>
-          <div className="flex-1 overflow-hidden">
-            <TranscriptPanel transcripts={transcripts} chapters={chapters} />
+          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {chapters.length > 0 ? (
+              chapters.map((ch, idx) => (
+                <ChapterListItem
+                  key={ch.id}
+                  chapter={ch}
+                  isActive={selectedChapter?.id === ch.id}
+                  isProcessing={progress.currentChapter === ch.title}
+                  transcriptCount={chapterTranscriptCounts[ch.id] || 0}
+                  onClick={() => setSelectedChapter(ch)}
+                />
+              ))
+            ) : (
+              <div className="text-gray-500 text-center py-8 text-sm">
+                {session ? 'A extrair cronologia...' : 'Introduz um URL para começar'}
+              </div>
+            )}
           </div>
+
+          {/* Stats no fundo */}
+          {transcripts.length > 0 && (
+            <div className="p-3 bg-gray-800 border-t border-gray-700 text-xs text-gray-400">
+              <div>Total: {transcripts.length} segmentos transcritos</div>
+              <div>{transcripts.reduce((acc, t) => acc + t.text.length, 0).toLocaleString()} caracteres</div>
+            </div>
+          )}
         </div>
 
-        {/* Analysis panels */}
-        <div className="w-96 flex flex-col">
-          {/* Fact-checks */}
-          <div className="flex-1 border-b border-gray-700 flex flex-col">
-            <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-              <h2 className="font-medium">✅ Fact-Check</h2>
-              <span className="text-sm text-gray-400">{factChecks.length}</span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {factChecks.map((fc, i) => (
-                <FactCheckItem key={i} factCheck={fc} />
-              ))}
-              {factChecks.length === 0 && (
-                <p className="text-gray-500 text-center text-sm">
-                  {session?.status === 'running' ? 'A processar...' : 'Sem fact-checks ainda'}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Rhetoric */}
-          <div className="flex-1 flex flex-col">
-            <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-              <h2 className="font-medium">🎭 Retórica</h2>
-              <span className="text-sm text-gray-400">{rhetoricTechniques.length}</span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {rhetoricTechniques.map((tech, i) => (
-                <RhetoricItem key={i} technique={tech} />
-              ))}
-              {rhetoricTechniques.length === 0 && (
-                <p className="text-gray-500 text-center text-sm">
-                  {session?.status === 'running' ? 'A analisar...' : 'Sem técnicas detetadas'}
-                </p>
-              )}
-            </div>
-          </div>
+        {/* Transcription panel */}
+        <div className="flex-1 flex flex-col bg-gray-900">
+          <ChapterTranscriptPanel
+            chapter={selectedChapter}
+            transcripts={transcripts}
+            nextChapterStart={getNextChapterStart(selectedChapter)}
+          />
         </div>
       </main>
 
       {/* Footer */}
       <footer className="bg-gray-800 p-2 text-center text-xs text-gray-500">
-        Despolariza Analyzer v0.1.0 | Powered by Whisper + Claude
+        Despolariza Transcriber v0.2.0 | Transcrição por capítulos usando Whisper
       </footer>
     </div>
   )
