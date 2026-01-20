@@ -2,6 +2,7 @@
 
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional, AsyncGenerator, Callable
 from dataclasses import dataclass
@@ -13,6 +14,9 @@ import shutil
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Usar python -m yt_dlp para compatibilidade com Windows
+YT_DLP_CMD = [sys.executable, "-m", "yt_dlp"]
 
 
 @dataclass
@@ -56,8 +60,7 @@ class YouTubeCapture:
 
         logger.info(f"Fetching video info for: {self.url}")
 
-        cmd = [
-            "yt-dlp",
+        cmd = YT_DLP_CMD + [
             "--dump-json",
             "--no-download",
             self.url
@@ -121,8 +124,7 @@ class YouTubeCapture:
         logger.info(f"Downloading audio to: {output_path}")
 
         # yt-dlp para extrair áudio + ffmpeg para converter para WAV 16kHz
-        cmd = [
-            "yt-dlp",
+        cmd = YT_DLP_CMD + [
             "-x",  # Extract audio
             "--audio-format", "wav",
             "--postprocessor-args",
