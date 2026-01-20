@@ -19,6 +19,29 @@ logger = logging.getLogger(__name__)
 YT_DLP_CMD = [sys.executable, "-m", "yt_dlp"]
 
 
+def cleanup_old_temp_dirs():
+    """
+    Limpa todas as pastas temporárias antigas do despolariza.
+    Deve ser chamado ao iniciar uma nova sessão.
+    """
+    temp_base = Path(tempfile.gettempdir())
+    cleaned = 0
+
+    for temp_dir in temp_base.glob("despolariza_*"):
+        if temp_dir.is_dir():
+            try:
+                shutil.rmtree(temp_dir)
+                cleaned += 1
+                logger.info(f"Cleaned old temp dir: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean {temp_dir}: {e}")
+
+    if cleaned > 0:
+        logger.info(f"Cleaned {cleaned} old temporary directories")
+
+    return cleaned
+
+
 @dataclass
 class VideoInfo:
     """Informação sobre um vídeo do YouTube."""

@@ -7,7 +7,7 @@ from datetime import datetime
 from uuid import uuid4
 import logging
 
-from .capture.youtube import YouTubeCapture, VideoInfo, AudioChunk
+from .capture.youtube import YouTubeCapture, VideoInfo, AudioChunk, cleanup_old_temp_dirs
 from .capture.audio_buffer import AudioBuffer
 from .agents.transcriber import TranscriberAgent
 from .agents.fact_checker import FactCheckerAgent
@@ -126,6 +126,9 @@ class Orchestrator:
         Returns:
             SessionState com informação da sessão
         """
+        # Limpar ficheiros temporários de sessões anteriores
+        cleanup_old_temp_dirs()
+
         # Criar sessão
         self._session = SessionState(
             id=str(uuid4()),
@@ -209,11 +212,21 @@ class Orchestrator:
             self._session.completed_at = datetime.now()
             await self._notify("complete", self._session)
 
+            # Limpar ficheiros temporários após processamento completo
+            if self._capture:
+                self._capture.cleanup()
+                logger.info("Temp files cleaned up after completion")
+
         except Exception as e:
             logger.error(f"Error processing video: {e}")
             self._session.status = "error"
             self._session.error_message = str(e)
             await self._notify("error", str(e))
+
+            # Limpar ficheiros temporários mesmo em caso de erro
+            if self._capture:
+                self._capture.cleanup()
+                logger.info("Temp files cleaned up after error")
 
     async def _wait_for_agents(self, timeout: float = 60.0):
         """Espera que os agentes terminem de processar."""
