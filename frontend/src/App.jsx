@@ -159,7 +159,7 @@ export default function App() {
   const [error, setError] = useState(null)
 
   const { messages, isConnected, send } = useWebSocket(
-    `ws://${window.location.hostname}:8000/ws`
+    `ws://${window.location.hostname}:3067/ws`
   )
 
   // Processar mensagens do WebSocket
