@@ -8,8 +8,15 @@ python-multipart>=0.0.6
 yt-dlp>=2024.1.0
 pydub>=0.25.1
 
-# Transcription (Whisper)
+# Transcription (Whisper) - escolher UMA opção:
+# Opção 1: faster-whisper (sem diarização)
 faster-whisper>=0.10.0
+
+# Opção 2: WhisperX (com diarização de speakers)
+# pip install whisperx
+# Requer HuggingFace token para pyannote: https://huggingface.co/settings/tokens
+# E aceitar termos em: https://huggingface.co/pyannote/speaker-diarization-3.1
+
 # Para GPU: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # AI / LLM

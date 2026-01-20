@@ -149,6 +149,18 @@ function ChapterListItem({ chapter, isActive, isProcessing, transcriptCount, onC
   )
 }
 
+// Cores para diferentes speakers
+const SPEAKER_COLORS = {
+  'SPEAKER_00': { bg: 'bg-blue-900/30', border: 'border-l-blue-500', text: 'text-blue-400', name: 'Speaker A' },
+  'SPEAKER_01': { bg: 'bg-green-900/30', border: 'border-l-green-500', text: 'text-green-400', name: 'Speaker B' },
+  'SPEAKER_02': { bg: 'bg-purple-900/30', border: 'border-l-purple-500', text: 'text-purple-400', name: 'Speaker C' },
+  'SPEAKER_03': { bg: 'bg-orange-900/30', border: 'border-l-orange-500', text: 'text-orange-400', name: 'Speaker D' },
+}
+
+function getSpeakerStyle(speaker) {
+  return SPEAKER_COLORS[speaker] || { bg: 'bg-gray-800/50', border: 'border-l-gray-500', text: 'text-gray-400', name: speaker || 'Unknown' }
+}
+
 // Painel de Transcrição de um Capítulo
 function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
   const scrollRef = useRef(null)
@@ -161,6 +173,46 @@ function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
       t.start_time >= chapter.start_time && t.start_time < endTime
     )
   }, [chapter, transcripts, nextChapterStart])
+
+  // Agrupar segmentos por speaker para visualização em conversa
+  const groupedByConversation = useMemo(() => {
+    const groups = []
+    let currentGroup = null
+
+    for (const transcript of chapterTranscripts) {
+      // Se tiver segmentos com speakers, agrupar por speaker
+      if (transcript.segments && transcript.segments.length > 0) {
+        for (const seg of transcript.segments) {
+          const speaker = seg.speaker || null
+          if (!currentGroup || currentGroup.speaker !== speaker) {
+            currentGroup = {
+              speaker,
+              segments: [],
+              startTime: seg.start
+            }
+            groups.push(currentGroup)
+          }
+          currentGroup.segments.push(seg)
+        }
+      } else {
+        // Fallback: usar o transcript inteiro
+        if (!currentGroup) {
+          currentGroup = { speaker: null, segments: [], startTime: transcript.start_time }
+          groups.push(currentGroup)
+        }
+        currentGroup.segments.push({
+          text: transcript.text,
+          start: transcript.start_time,
+          end: transcript.end_time,
+          speaker: null
+        })
+      }
+    }
+    return groups
+  }, [chapterTranscripts])
+
+  // Verificar se temos diarização
+  const hasSpeakers = groupedByConversation.some(g => g.speaker)
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -182,6 +234,9 @@ function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
   // Juntar todo o texto do capítulo
   const fullText = chapterTranscripts.map(t => t.text).join(' ')
 
+  // Contar speakers únicos
+  const uniqueSpeakers = [...new Set(groupedByConversation.map(g => g.speaker).filter(Boolean))]
+
   return (
     <div className="h-full flex flex-col">
       {/* Header do capítulo */}
@@ -196,21 +251,62 @@ function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
           )}
         </div>
         <h2 className="text-lg font-bold text-blue-400">{chapter.title}</h2>
-        <div className="text-xs text-gray-500 mt-1">
-          {chapterTranscripts.length} segmentos | {fullText.length} caracteres
+        <div className="text-xs text-gray-500 mt-1 flex items-center gap-3">
+          <span>{chapterTranscripts.length} segmentos | {fullText.length} caracteres</span>
+          {hasSpeakers && (
+            <span className="flex items-center gap-1">
+              🎤 {uniqueSpeakers.length} speakers
+              {uniqueSpeakers.map(s => {
+                const style = getSpeakerStyle(s)
+                return (
+                  <span key={s} className={`${style.text} text-xs`}>
+                    ({style.name})
+                  </span>
+                )
+              })}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Texto completo do capítulo */}
+      {/* Texto do capítulo */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
         {chapterTranscripts.length > 0 ? (
           <div className="space-y-4">
-            {/* Texto contínuo */}
-            <div className="bg-gray-800/50 rounded-lg p-4">
-              <p className="text-gray-200 leading-relaxed whitespace-pre-wrap">
-                {fullText}
-              </p>
-            </div>
+            {/* Modo conversa (se houver speakers) */}
+            {hasSpeakers ? (
+              <div className="space-y-3">
+                {groupedByConversation.map((group, i) => {
+                  const style = getSpeakerStyle(group.speaker)
+                  const groupText = group.segments.map(s => s.text).join(' ')
+                  return (
+                    <div
+                      key={i}
+                      className={`${style.bg} ${style.border} border-l-4 rounded-r-lg p-3`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`${style.text} font-medium text-sm`}>
+                          {style.name}
+                        </span>
+                        <span className="text-xs text-gray-500 font-mono">
+                          {formatTime(group.startTime)}
+                        </span>
+                      </div>
+                      <p className="text-gray-200 text-sm leading-relaxed">
+                        {groupText}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              /* Modo texto simples (sem speakers) */
+              <div className="bg-gray-800/50 rounded-lg p-4">
+                <p className="text-gray-200 leading-relaxed whitespace-pre-wrap">
+                  {fullText}
+                </p>
+              </div>
+            )}
 
             {/* Timeline detalhada */}
             <details className="group">

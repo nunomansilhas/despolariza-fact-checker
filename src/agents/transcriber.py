@@ -1,4 +1,4 @@
-"""Agente de transcrição usando Whisper."""
+"""Agente de transcrição usando Whisper/WhisperX com diarização opcional."""
 
 import asyncio
 import math
@@ -14,12 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class TranscriberAgent(BaseAgent):
-    """Agente que transcreve áudio usando Whisper."""
+    """Agente que transcreve áudio usando Whisper ou WhisperX (com diarização)."""
 
     def __init__(self):
         super().__init__("transcriber")
         self._model = None
+        self._diarize_model = None
         self._model_loaded = False
+        self._use_whisperx = False
+        self._align_model = None
+        self._align_metadata = None
 
     async def load_model(self):
         """Carrega o modelo Whisper (async wrapper)."""
@@ -37,29 +41,61 @@ class TranscriberAgent(BaseAgent):
 
     def _load_model_sync(self):
         """Carrega o modelo de forma síncrona."""
+        # Determinar device
+        device = settings.whisper_device
+        if device == "auto":
+            try:
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                device = "cpu"
+
+        compute_type = settings.whisper_compute_type
+        if device == "cpu" and compute_type == "float16":
+            compute_type = "int8"  # CPU não suporta float16 bem
+
+        logger.info(f"Using device: {device}, compute_type: {compute_type}")
+
+        # Tentar WhisperX primeiro se diarização está ativada
+        if settings.enable_diarization and settings.hf_token:
+            try:
+                import whisperx
+                logger.info("Loading WhisperX with diarization support...")
+
+                self._model = whisperx.load_model(
+                    settings.whisper_model,
+                    device=device,
+                    compute_type=compute_type,
+                    language=settings.whisper_language
+                )
+
+                # Carregar modelo de diarização
+                logger.info("Loading diarization model...")
+                self._diarize_model = whisperx.DiarizationPipeline(
+                    use_auth_token=settings.hf_token,
+                    device=device
+                )
+
+                self._use_whisperx = True
+                logger.info("WhisperX loaded with diarization support")
+                return
+
+            except ImportError:
+                logger.warning("WhisperX not installed, falling back to faster-whisper")
+            except Exception as e:
+                logger.warning(f"Failed to load WhisperX: {e}, falling back to faster-whisper")
+
+        # Fallback para faster-whisper
         try:
             from faster_whisper import WhisperModel
-
-            # Determinar device
-            device = settings.whisper_device
-            if device == "auto":
-                try:
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
-
-            compute_type = settings.whisper_compute_type
-            if device == "cpu" and compute_type == "float16":
-                compute_type = "int8"  # CPU não suporta float16 bem
-
-            logger.info(f"Using device: {device}, compute_type: {compute_type}")
 
             self._model = WhisperModel(
                 settings.whisper_model,
                 device=device,
                 compute_type=compute_type,
             )
+            self._use_whisperx = False
+            logger.info("Using faster-whisper (no diarization)")
 
         except ImportError:
             logger.warning("faster-whisper not installed, using mock transcriber")
@@ -90,39 +126,23 @@ class TranscriberAgent(BaseAgent):
 
         # Transcrever
         loop = asyncio.get_event_loop()
-        segments_data, info = await loop.run_in_executor(
-            None,
-            self._transcribe_sync,
-            str(audio_path)
-        )
 
-        # Converter para modelos
-        segments = []
-        full_text_parts = []
-
-        for segment in segments_data:
-            # Convert log probability to probability (0-1 range)
-            # avg_logprob is typically negative, e.g., -0.3
-            # exp(-0.3) ≈ 0.74, exp(-1) ≈ 0.37, exp(0) = 1
-            raw_logprob = segment.avg_logprob if hasattr(segment, 'avg_logprob') else -0.1
-            confidence = max(0.0, min(1.0, math.exp(raw_logprob)))
-
-            seg = TranscriptSegment(
-                text=segment.text.strip(),
-                start=start_time + segment.start,
-                end=start_time + segment.end,
-                confidence=confidence
+        if self._use_whisperx:
+            result = await loop.run_in_executor(
+                None,
+                self._transcribe_whisperx,
+                str(audio_path),
+                start_time
             )
-            segments.append(seg)
-            full_text_parts.append(segment.text.strip())
+        else:
+            result = await loop.run_in_executor(
+                None,
+                self._transcribe_faster_whisper,
+                str(audio_path),
+                start_time
+            )
 
-        full_text = " ".join(full_text_parts)
-
-        # Calcular confiança média
-        avg_confidence = (
-            sum(s.confidence for s in segments) / len(segments)
-            if segments else 0.0
-        )
+        segments, full_text, language, avg_confidence = result
 
         # Determinar end_time
         end_time = segments[-1].end if segments else start_time + settings.audio_chunk_duration
@@ -133,72 +153,150 @@ class TranscriberAgent(BaseAgent):
             end_time=end_time,
             text=full_text,
             segments=segments,
-            language=info.language if hasattr(info, 'language') else settings.whisper_language,
+            language=language,
             confidence=avg_confidence
         )
 
-        logger.info(f"Transcribed chunk {chunk_id}: {len(full_text)} chars, {len(segments)} segments")
+        # Log com info de speakers
+        speakers = set(s.speaker for s in segments if s.speaker)
+        speaker_info = f", speakers: {speakers}" if speakers else ""
+        logger.info(f"Transcribed chunk {chunk_id}: {len(full_text)} chars, {len(segments)} segments{speaker_info}")
 
         return chunk
 
-    def _transcribe_sync(self, audio_path: str) -> tuple:
-        """Transcrição síncrona."""
-        if self._model is None:
-            # Mock para testes
-            return self._mock_transcribe(audio_path)
+    def _transcribe_whisperx(self, audio_path: str, start_time: float) -> tuple:
+        """Transcrição com WhisperX e diarização."""
+        import whisperx
 
-        segments, info = self._model.transcribe(
+        # Carregar áudio
+        audio = whisperx.load_audio(audio_path)
+
+        # Transcrever
+        result = self._model.transcribe(audio, batch_size=16)
+
+        # Alinhar com timestamps precisos
+        if self._align_model is None:
+            device = settings.whisper_device
+            if device == "auto":
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+
+            self._align_model, self._align_metadata = whisperx.load_align_model(
+                language_code=settings.whisper_language,
+                device=device
+            )
+
+        result = whisperx.align(
+            result["segments"],
+            self._align_model,
+            self._align_metadata,
+            audio,
+            device=settings.whisper_device if settings.whisper_device != "auto" else "cpu",
+            return_char_alignments=False
+        )
+
+        # Diarização
+        if self._diarize_model:
+            diarize_segments = self._diarize_model(
+                audio,
+                min_speakers=settings.min_speakers,
+                max_speakers=settings.max_speakers
+            )
+            result = whisperx.assign_word_speakers(diarize_segments, result)
+
+        # Converter para nosso formato
+        segments = []
+        full_text_parts = []
+
+        for seg in result.get("segments", []):
+            speaker = seg.get("speaker", None)
+            text = seg.get("text", "").strip()
+
+            if not text:
+                continue
+
+            segment = TranscriptSegment(
+                text=text,
+                start=start_time + seg.get("start", 0),
+                end=start_time + seg.get("end", 0),
+                confidence=0.9,  # WhisperX não retorna confidence diretamente
+                speaker=speaker
+            )
+            segments.append(segment)
+            full_text_parts.append(f"[{speaker}] {text}" if speaker else text)
+
+        full_text = " ".join(full_text_parts)
+        avg_confidence = 0.9
+
+        return segments, full_text, settings.whisper_language, avg_confidence
+
+    def _transcribe_faster_whisper(self, audio_path: str, start_time: float) -> tuple:
+        """Transcrição com faster-whisper (sem diarização)."""
+        if self._model is None:
+            return self._mock_transcribe(audio_path, start_time)
+
+        segments_gen, info = self._model.transcribe(
             audio_path,
             language=settings.whisper_language,
             beam_size=5,
             word_timestamps=True,
-            vad_filter=True,  # Filtrar silêncio
+            vad_filter=True,
         )
 
-        # Converter generator para lista
-        segments_list = list(segments)
+        segments = []
+        full_text_parts = []
 
-        return segments_list, info
+        for segment in segments_gen:
+            raw_logprob = segment.avg_logprob if hasattr(segment, 'avg_logprob') else -0.1
+            confidence = max(0.0, min(1.0, math.exp(raw_logprob)))
 
-    def _mock_transcribe(self, audio_path: str) -> tuple:
+            seg = TranscriptSegment(
+                text=segment.text.strip(),
+                start=start_time + segment.start,
+                end=start_time + segment.end,
+                confidence=confidence,
+                speaker=None  # Sem diarização
+            )
+            segments.append(seg)
+            full_text_parts.append(segment.text.strip())
+
+        full_text = " ".join(full_text_parts)
+        avg_confidence = (
+            sum(s.confidence for s in segments) / len(segments)
+            if segments else 0.0
+        )
+
+        return segments, full_text, info.language if hasattr(info, 'language') else settings.whisper_language, avg_confidence
+
+    def _mock_transcribe(self, audio_path: str, start_time: float) -> tuple:
         """Transcrição mock para desenvolvimento."""
-        from dataclasses import dataclass
-
-        @dataclass
-        class MockSegment:
-            text: str
-            start: float
-            end: float
-            avg_logprob: float = -0.3
-
-        @dataclass
-        class MockInfo:
-            language: str = "pt"
-            duration: float = 30.0
-
-        # Gerar texto mock
         mock_segments = [
-            MockSegment(
+            TranscriptSegment(
                 text=f"[Mock transcript para {Path(audio_path).name}]",
-                start=0.0,
-                end=5.0,
-                avg_logprob=-0.2
+                start=start_time,
+                end=start_time + 5.0,
+                confidence=0.9,
+                speaker="SPEAKER_00"
             ),
-            MockSegment(
+            TranscriptSegment(
                 text="Esta é uma transcrição de teste gerada automaticamente.",
-                start=5.0,
-                end=10.0,
-                avg_logprob=-0.3
+                start=start_time + 5.0,
+                end=start_time + 10.0,
+                confidence=0.85,
+                speaker="SPEAKER_01"
             ),
-            MockSegment(
+            TranscriptSegment(
                 text="O modelo Whisper não está instalado.",
-                start=10.0,
-                end=15.0,
-                avg_logprob=-0.25
+                start=start_time + 10.0,
+                end=start_time + 15.0,
+                confidence=0.88,
+                speaker="SPEAKER_00"
             ),
         ]
 
-        return mock_segments, MockInfo()
+        full_text = " ".join(f"[{s.speaker}] {s.text}" for s in mock_segments)
+
+        return mock_segments, full_text, "pt", 0.87
 
 
 async def test_transcriber():

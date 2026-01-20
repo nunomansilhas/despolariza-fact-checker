@@ -12,11 +12,17 @@ class Settings(BaseSettings):
     base_dir: Path = Path(__file__).parent.parent
     temp_dir: Path = Field(default_factory=lambda: Path("/tmp/despolariza"))
 
-    # Whisper
+    # Whisper / WhisperX
     whisper_model: str = "large-v3"  # tiny, base, small, medium, large-v3
     whisper_device: str = "auto"  # cpu, cuda, auto
     whisper_compute_type: str = "float16"  # float16, int8, float32
     whisper_language: str = "pt"
+
+    # Speaker Diarization (WhisperX)
+    enable_diarization: bool = True  # Identificar diferentes speakers
+    hf_token: str = ""  # HuggingFace token para pyannote (diarização)
+    min_speakers: int = 1  # Número mínimo de speakers esperados
+    max_speakers: int = 4  # Número máximo de speakers esperados
 
     # Audio Capture
     audio_chunk_duration: int = 30  # segundos por chunk

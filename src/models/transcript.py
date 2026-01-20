@@ -12,6 +12,7 @@ class TranscriptSegment(BaseModel):
     start: float  # segundos desde início
     end: float
     confidence: float = Field(ge=0.0, le=1.0)
+    speaker: Optional[str] = None  # SPEAKER_00, SPEAKER_01, etc.
 
 
 class TranscriptChunk(BaseModel):
