@@ -74,33 +74,29 @@ class Orchestrator:
         self._setup_agent_callbacks()
 
     def _setup_agent_callbacks(self):
-        """Configura callbacks dos agentes."""
+        """Configura callbacks dos agentes (para processamento em background)."""
+        pass  # Agora processamos síncronamente no _process_video
 
-        async def on_transcript(chunk: TranscriptChunk):
-            if self._session:
-                self._session.transcripts.append(chunk)
-                await self._notify("transcript", chunk)
-
-                # Enviar para outros agentes
-                if settings.fact_check_enabled:
-                    await self.fact_checker.submit(chunk)
-                if settings.rhetoric_analysis_enabled:
-                    await self.rhetoric_analyzer.submit(chunk)
-
-        async def on_fact_check(results: list[FactCheckResult]):
+    async def _process_fact_check(self, transcript: TranscriptChunk):
+        """Processa fact-check em background."""
+        try:
+            results = await self.fact_checker.process(transcript)
             if self._session and results:
                 self._session.fact_checks.extend(results)
                 for result in results:
                     await self._notify("fact_check", result)
+        except Exception as e:
+            logger.error(f"Fact-check error: {e}")
 
-        async def on_rhetoric(analysis: RhetoricAnalysis):
-            if self._session:
+    async def _process_rhetoric(self, transcript: TranscriptChunk):
+        """Processa análise retórica em background."""
+        try:
+            analysis = await self.rhetoric_analyzer.process(transcript)
+            if self._session and analysis:
                 self._session.rhetoric_analyses.append(analysis)
                 await self._notify("rhetoric", analysis)
-
-        self.transcriber.on_result(on_transcript)
-        self.fact_checker.on_result(on_fact_check)
-        self.rhetoric_analyzer.on_result(on_rhetoric)
+        except Exception as e:
+            logger.error(f"Rhetoric analysis error: {e}")
 
     def on(self, event: str, callback: Callable):
         """Regista callback para um evento."""
@@ -215,25 +211,9 @@ class Orchestrator:
         try:
             await self._notify("status", {"stage": "downloading", "message": "A descarregar áudio..."})
 
-            first_chunk = True
             async for chunk in self._capture.stream_chunks():
                 if self._session.status != "running":
                     break
-
-                # Notificar quando começar a processar
-                if first_chunk:
-                    await self._notify("status", {"stage": "transcribing", "message": "A transcrever..."})
-                    first_chunk = False
-
-                # Adicionar ao buffer
-                self._buffer.add(chunk)
-
-                # Enviar para transcrição
-                await self.transcriber.submit({
-                    "audio_path": str(chunk.path),
-                    "chunk_id": chunk.chunk_id,
-                    "start_time": chunk.start_time
-                })
 
                 # Determinar capítulo atual
                 current_chapter = None
@@ -241,7 +221,41 @@ class Orchestrator:
                     if ch.start_time <= chunk.start_time:
                         if ch.end_time is None or chunk.start_time < ch.end_time:
                             current_chapter = ch
-                            break
+
+                # Notificar status com capítulo
+                chapter_info = f" ({current_chapter.title})" if current_chapter else ""
+                await self._notify("status", {
+                    "stage": "transcribing",
+                    "message": f"A transcrever chunk {chunk.chunk_id}{chapter_info}..."
+                })
+
+                # Processar este chunk SINCRONAMENTE (um de cada vez)
+                try:
+                    # Transcrever diretamente (sem queue)
+                    transcript = await self.transcriber.process({
+                        "audio_path": str(chunk.path),
+                        "chunk_id": chunk.chunk_id,
+                        "start_time": chunk.start_time
+                    })
+
+                    # Guardar e notificar transcrição
+                    self._session.transcripts.append(transcript)
+                    await self._notify("transcript", transcript)
+
+                    # Enviar para análise (fact-check e retórica) em paralelo
+                    if settings.fact_check_enabled:
+                        asyncio.create_task(self._process_fact_check(transcript))
+                    if settings.rhetoric_analysis_enabled:
+                        asyncio.create_task(self._process_rhetoric(transcript))
+
+                except Exception as e:
+                    logger.error(f"Error processing chunk {chunk.chunk_id}: {e}")
+
+                # Limpar ficheiro do chunk após processamento
+                try:
+                    chunk.path.unlink()
+                except Exception:
+                    pass
 
                 # Atualizar progresso
                 self._session.current_time = chunk.start_time + chunk.duration
@@ -252,12 +266,9 @@ class Orchestrator:
                     "total_duration": self._session.video_info.duration,
                     "percentage": (self._session.current_time / self._session.video_info.duration) * 100,
                     "chunks_processed": self._session.chunks_processed,
-                    "current_chapter": current_chapter.title if current_chapter else None,
-                    "transcriber_queue": self.transcriber.queue_size
+                    "total_chunks": int(self._session.video_info.duration / settings.audio_chunk_duration) + 1,
+                    "current_chapter": current_chapter.title if current_chapter else None
                 })
-
-            # Esperar que os agentes terminem
-            await self._wait_for_agents()
 
             self._session.status = "completed"
             self._session.completed_at = datetime.now()

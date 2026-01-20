@@ -223,7 +223,7 @@ export default function App() {
   const [factChecks, setFactChecks] = useState([])
   const [rhetoricTechniques, setRhetoricTechniques] = useState([])
   const [chapters, setChapters] = useState([])
-  const [progress, setProgress] = useState({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0 })
+  const [progress, setProgress] = useState({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0, totalChunks: 0 })
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -258,7 +258,8 @@ export default function App() {
           current: lastMessage.data.current_time,
           total: lastMessage.data.total_duration,
           currentChapter: lastMessage.data.current_chapter,
-          chunksProcessed: lastMessage.data.chunks_processed || 0
+          chunksProcessed: lastMessage.data.chunks_processed || 0,
+          totalChunks: lastMessage.data.total_chunks || 0
         })
         break
       case 'status':
@@ -404,7 +405,7 @@ export default function App() {
                 {formatTime(progress.current)} / {formatTime(progress.total)}
               </span>
               <span className="text-xs text-gray-500">
-                ({progress.chunksProcessed} chunks)
+                (chunk {progress.chunksProcessed}{progress.totalChunks ? ` / ${progress.totalChunks}` : ''})
               </span>
             </div>
             {progress.currentChapter && (
