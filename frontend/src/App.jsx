@@ -51,6 +51,59 @@ function useWebSocket(url) {
   return { messages, isConnected, send }
 }
 
+// Formatar tempo em HH:MM:SS ou MM:SS
+function formatTime(seconds) {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  }
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+// Componente de Status
+function StatusBanner({ status }) {
+  const stageEmoji = {
+    'fetching_info': '🔍',
+    'parsing_chapters': '📑',
+    'loading_model': '🧠',
+    'model_ready': '✓',
+    'downloading': '📥',
+    'transcribing': '🎤',
+  }
+
+  if (!status) return null
+
+  return (
+    <div className="bg-blue-900/50 text-blue-200 px-4 py-2 flex items-center gap-2 animate-pulse">
+      <span>{stageEmoji[status.stage] || '⏳'}</span>
+      <span>{status.message}</span>
+    </div>
+  )
+}
+
+// Componente de Capítulo/Cronologia
+function ChapterItem({ chapter, isActive, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className={`p-2 rounded cursor-pointer transition ${
+        isActive
+          ? 'bg-blue-600 text-white'
+          : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-mono text-gray-400">
+          {formatTime(chapter.start_time)}
+        </span>
+        <span className="text-sm flex-1 truncate">{chapter.title}</span>
+      </div>
+    </div>
+  )
+}
+
 // Componente de Fact-Check
 function FactCheckItem({ factCheck }) {
   const verdictEmoji = {
@@ -62,19 +115,19 @@ function FactCheckItem({ factCheck }) {
   }
 
   const verdictClass = {
-    true: 'verdict-true',
-    partial: 'verdict-partial',
-    false: 'verdict-false',
-    inconclusive: 'verdict-inconclusive',
-    pending: 'text-gray-500'
+    true: 'border-l-green-500',
+    partial: 'border-l-yellow-500',
+    false: 'border-l-red-500',
+    inconclusive: 'border-l-gray-500',
+    pending: 'border-l-gray-600'
   }
 
   return (
-    <div className="bg-gray-800 p-3 rounded-lg mb-2">
+    <div className={`bg-gray-800 p-3 rounded-lg mb-2 border-l-4 ${verdictClass[factCheck.verdict] || 'border-l-gray-600'}`}>
       <div className="flex items-start gap-2">
         <span className="text-xl">{verdictEmoji[factCheck.verdict] || '❓'}</span>
         <div className="flex-1">
-          <p className={`font-medium ${verdictClass[factCheck.verdict]}`}>
+          <p className="font-medium text-gray-200">
             {factCheck.claim?.text}
           </p>
           {factCheck.explanation && (
@@ -93,14 +146,14 @@ function FactCheckItem({ factCheck }) {
 
 // Componente de Técnica Retórica
 function RhetoricItem({ technique }) {
-  const severityClass = {
-    low: 'severity-low',
-    medium: 'severity-medium',
-    high: 'severity-high'
+  const severityColors = {
+    low: 'border-l-blue-500 bg-blue-900/20',
+    medium: 'border-l-yellow-500 bg-yellow-900/20',
+    high: 'border-l-red-500 bg-red-900/20'
   }
 
   return (
-    <div className={`bg-gray-800 p-3 rounded-lg mb-2 border-l-4 ${severityClass[technique.severity] || 'border-l-gray-600'}`}>
+    <div className={`p-3 rounded-lg mb-2 border-l-4 ${severityColors[technique.severity] || 'border-l-gray-600 bg-gray-800'}`}>
       <div className="font-medium text-blue-400">{technique.type}</div>
       <p className="text-sm text-gray-300 mt-1 italic">"{technique.quote}"</p>
       {technique.explanation && (
@@ -111,7 +164,7 @@ function RhetoricItem({ technique }) {
 }
 
 // Componente de Transcrição
-function TranscriptPanel({ transcripts }) {
+function TranscriptPanel({ transcripts, chapters }) {
   const scrollRef = useRef(null)
 
   useEffect(() => {
@@ -120,26 +173,41 @@ function TranscriptPanel({ transcripts }) {
     }
   }, [transcripts])
 
-  const formatTime = (seconds) => {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = Math.floor(seconds % 60)
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  // Agrupar transcrições por capítulo
+  const getChapterForTime = (time) => {
+    for (let i = chapters.length - 1; i >= 0; i--) {
+      if (time >= chapters[i].start_time) {
+        return chapters[i]
+      }
     }
-    return `${m}:${s.toString().padStart(2, '0')}`
+    return null
   }
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto p-4 space-y-2">
-      {transcripts.map((t, i) => (
-        <div key={i} className="flex gap-3">
-          <span className="text-xs text-gray-500 whitespace-nowrap">
-            {formatTime(t.start_time)}
-          </span>
-          <p className="text-sm text-gray-300">{t.text}</p>
-        </div>
-      ))}
+      {transcripts.map((t, i) => {
+        const chapter = getChapterForTime(t.start_time)
+        const prevChapter = i > 0 ? getChapterForTime(transcripts[i-1].start_time) : null
+        const showChapterHeader = chapter && (!prevChapter || chapter.id !== prevChapter?.id)
+
+        return (
+          <div key={i}>
+            {showChapterHeader && (
+              <div className="bg-blue-900/30 px-3 py-1 rounded-lg mb-2 mt-4 first:mt-0">
+                <span className="text-blue-400 font-medium text-sm">
+                  📌 {chapter.title}
+                </span>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <span className="text-xs text-gray-500 whitespace-nowrap font-mono">
+                {formatTime(t.start_time)}
+              </span>
+              <p className="text-sm text-gray-300">{t.text}</p>
+            </div>
+          </div>
+        )
+      })}
       {transcripts.length === 0 && (
         <p className="text-gray-500 text-center">A aguardar transcrição...</p>
       )}
@@ -154,7 +222,9 @@ export default function App() {
   const [transcripts, setTranscripts] = useState([])
   const [factChecks, setFactChecks] = useState([])
   const [rhetoricTechniques, setRhetoricTechniques] = useState([])
-  const [progress, setProgress] = useState({ current: 0, total: 0 })
+  const [chapters, setChapters] = useState([])
+  const [progress, setProgress] = useState({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0 })
+  const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -180,17 +250,27 @@ export default function App() {
           setRhetoricTechniques(prev => [...prev, ...lastMessage.data.techniques])
         }
         break
+      case 'chapter':
+        setChapters(prev => [...prev, lastMessage.data])
+        break
       case 'progress':
         setProgress({
           current: lastMessage.data.current_time,
-          total: lastMessage.data.total_duration
+          total: lastMessage.data.total_duration,
+          currentChapter: lastMessage.data.current_chapter,
+          chunksProcessed: lastMessage.data.chunks_processed || 0
         })
+        break
+      case 'status':
+        setStatus(lastMessage.data)
         break
       case 'complete':
         setSession(prev => prev ? { ...prev, status: 'completed' } : null)
+        setStatus(null)
         break
       case 'error':
         setError(lastMessage.message || lastMessage.data)
+        setStatus(null)
         break
     }
   }, [messages])
@@ -203,6 +283,8 @@ export default function App() {
     setTranscripts([])
     setFactChecks([])
     setRhetoricTechniques([])
+    setChapters([])
+    setStatus({ stage: 'fetching_info', message: 'A iniciar...' })
 
     try {
       const response = await fetch('/api/session/start', {
@@ -221,6 +303,7 @@ export default function App() {
       setProgress({ current: 0, total: data.video_duration || 0 })
     } catch (e) {
       setError(e.message)
+      setStatus(null)
     } finally {
       setLoading(false)
     }
@@ -230,6 +313,7 @@ export default function App() {
     try {
       await fetch('/api/session/stop', { method: 'POST' })
       setSession(prev => prev ? { ...prev, status: 'stopped' } : null)
+      setStatus(null)
     } catch (e) {
       setError(e.message)
     }
@@ -271,6 +355,7 @@ export default function App() {
               placeholder="Cole o URL do YouTube..."
               className="flex-1 px-4 py-2 bg-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={loading || session?.status === 'running'}
+              onKeyDown={(e) => e.key === 'Enter' && handleStart()}
             />
 
             {!session || session.status !== 'running' ? (
@@ -315,15 +400,24 @@ export default function App() {
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
-              <span className="text-sm text-gray-400">
-                {Math.floor(progress.current / 60)}:{String(Math.floor(progress.current % 60)).padStart(2, '0')}
-                {' / '}
-                {Math.floor(progress.total / 60)}:{String(Math.floor(progress.total % 60)).padStart(2, '0')}
+              <span className="text-sm text-gray-400 whitespace-nowrap">
+                {formatTime(progress.current)} / {formatTime(progress.total)}
+              </span>
+              <span className="text-xs text-gray-500">
+                ({progress.chunksProcessed} chunks)
               </span>
             </div>
+            {progress.currentChapter && (
+              <div className="text-xs text-gray-400 mt-1">
+                📌 {progress.currentChapter}
+              </div>
+            )}
           </div>
         )}
       </header>
+
+      {/* Status banner */}
+      <StatusBanner status={status} />
 
       {/* Error banner */}
       {error && (
@@ -337,7 +431,7 @@ export default function App() {
       {session && (
         <div className="bg-gray-800 px-4 py-2 border-b border-gray-700">
           <div className="max-w-7xl mx-auto flex items-center gap-4 text-sm">
-            <span className="text-gray-400">📺 {session.video_title}</span>
+            <span className="text-gray-400 truncate flex-1">📺 {session.video_title}</span>
             <span className={`px-2 py-0.5 rounded text-xs ${
               session.status === 'running' ? 'bg-green-900 text-green-300' :
               session.status === 'completed' ? 'bg-blue-900 text-blue-300' :
@@ -351,30 +445,51 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
+        {/* Chapters sidebar */}
+        {chapters.length > 0 && (
+          <div className="w-64 bg-gray-900 border-r border-gray-700 flex flex-col">
+            <div className="p-3 bg-gray-800 border-b border-gray-700">
+              <h2 className="font-medium text-sm">📑 Cronologia ({chapters.length})</h2>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {chapters.map((ch, i) => (
+                <ChapterItem
+                  key={i}
+                  chapter={ch}
+                  isActive={progress.currentChapter === ch.title}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Transcription panel */}
-        <div className="w-1/2 border-r border-gray-700 flex flex-col">
-          <div className="p-3 bg-gray-800 border-b border-gray-700">
+        <div className="flex-1 border-r border-gray-700 flex flex-col">
+          <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
             <h2 className="font-medium">📝 Transcrição</h2>
+            <span className="text-sm text-gray-400">{transcripts.length} segmentos</span>
           </div>
           <div className="flex-1 overflow-hidden">
-            <TranscriptPanel transcripts={transcripts} />
+            <TranscriptPanel transcripts={transcripts} chapters={chapters} />
           </div>
         </div>
 
         {/* Analysis panels */}
-        <div className="w-1/2 flex flex-col">
+        <div className="w-96 flex flex-col">
           {/* Fact-checks */}
           <div className="flex-1 border-b border-gray-700 flex flex-col">
             <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
               <h2 className="font-medium">✅ Fact-Check</h2>
-              <span className="text-sm text-gray-400">{factChecks.length} verificações</span>
+              <span className="text-sm text-gray-400">{factChecks.length}</span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-3">
               {factChecks.map((fc, i) => (
                 <FactCheckItem key={i} factCheck={fc} />
               ))}
               {factChecks.length === 0 && (
-                <p className="text-gray-500 text-center">A aguardar fact-checks...</p>
+                <p className="text-gray-500 text-center text-sm">
+                  {session?.status === 'running' ? 'A processar...' : 'Sem fact-checks ainda'}
+                </p>
               )}
             </div>
           </div>
@@ -383,14 +498,16 @@ export default function App() {
           <div className="flex-1 flex flex-col">
             <div className="p-3 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
               <h2 className="font-medium">🎭 Retórica</h2>
-              <span className="text-sm text-gray-400">{rhetoricTechniques.length} técnicas</span>
+              <span className="text-sm text-gray-400">{rhetoricTechniques.length}</span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-3">
               {rhetoricTechniques.map((tech, i) => (
                 <RhetoricItem key={i} technique={tech} />
               ))}
               {rhetoricTechniques.length === 0 && (
-                <p className="text-gray-500 text-center">A aguardar análise retórica...</p>
+                <p className="text-gray-500 text-center text-sm">
+                  {session?.status === 'running' ? 'A analisar...' : 'Sem técnicas detetadas'}
+                </p>
               )}
             </div>
           </div>

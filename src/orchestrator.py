@@ -12,6 +12,7 @@ from .capture.audio_buffer import AudioBuffer
 from .agents.transcriber import TranscriberAgent
 from .agents.fact_checker import FactCheckerAgent
 from .agents.rhetoric import RhetoricAnalyzerAgent
+from .agents.description_parser import extract_chapters_smart, DescriptionChapter
 from .models.transcript import TranscriptChunk
 from .models.claim import FactCheckResult
 from .models.analysis import RhetoricAnalysis, Chapter, ChapterAnalysis
@@ -64,6 +65,7 @@ class Orchestrator:
             "rhetoric": [],
             "chapter": [],
             "progress": [],
+            "status": [],      # Status updates (loading model, downloading, etc.)
             "error": [],
             "complete": [],
         }
@@ -136,21 +138,49 @@ class Orchestrator:
         )
 
         try:
+            # Notificar frontend do status
+            await self._notify("status", {"stage": "fetching_info", "message": "A obter informação do vídeo..."})
+
             # Iniciar captura
             self._capture = YouTubeCapture(url)
             self._session.video_info = await self._capture.get_video_info()
 
-            # Extrair capítulos do vídeo
-            for i, ch in enumerate(self._session.video_info.chapters):
-                chapter = Chapter(
-                    id=f"ch_{i}",
-                    title=ch.get("title", f"Capítulo {i+1}"),
-                    start_time=ch.get("start_time", 0),
-                    end_time=ch.get("end_time"),
-                    detected_by="video"
-                )
-                self._session.chapters.append(chapter)
-                await self._notify("chapter", chapter)
+            await self._notify("status", {"stage": "parsing_chapters", "message": "A extrair cronologia da descrição..."})
+
+            # Extrair capítulos da descrição (CRONOLOGIA)
+            description_chapters = extract_chapters_smart(
+                self._session.video_info.description,
+                self._session.video_info.duration
+            )
+
+            if description_chapters:
+                logger.info(f"Found {len(description_chapters)} chapters in description")
+                for i, ch in enumerate(description_chapters):
+                    chapter = Chapter(
+                        id=f"ch_{i}",
+                        title=ch.title,
+                        start_time=ch.start_time,
+                        end_time=ch.end_time,
+                        detected_by="description"
+                    )
+                    self._session.chapters.append(chapter)
+                    await self._notify("chapter", chapter)
+            else:
+                # Fallback: usar capítulos do vídeo (se existirem)
+                logger.info("No chapters in description, checking video metadata...")
+                for i, ch in enumerate(self._session.video_info.chapters):
+                    chapter = Chapter(
+                        id=f"ch_{i}",
+                        title=ch.get("title", f"Capítulo {i+1}"),
+                        start_time=ch.get("start_time", 0),
+                        end_time=ch.get("end_time"),
+                        detected_by="video"
+                    )
+                    self._session.chapters.append(chapter)
+                    await self._notify("chapter", chapter)
+
+            if not self._session.chapters:
+                logger.warning("No chapters found, will process entire video")
 
             # Iniciar agentes
             await self.transcriber.start()
@@ -160,9 +190,11 @@ class Orchestrator:
             # Preload Whisper model BEFORE processing starts
             # This can take several minutes for large models (downloading ~3GB)
             # If we don't preload, chunks may be deleted before transcription starts
+            await self._notify("status", {"stage": "loading_model", "message": "A carregar modelo Whisper..."})
             logger.info("Preloading Whisper model (this may take a few minutes on first run)...")
             await self.transcriber.load_model()
             logger.info("Whisper model ready!")
+            await self._notify("status", {"stage": "model_ready", "message": "Modelo pronto!"})
 
             self._session.status = "running"
             logger.info(f"Session {self._session.id} started for: {self._session.video_info.title}")
@@ -181,9 +213,17 @@ class Orchestrator:
     async def _process_video(self):
         """Processa o vídeo em background."""
         try:
+            await self._notify("status", {"stage": "downloading", "message": "A descarregar áudio..."})
+
+            first_chunk = True
             async for chunk in self._capture.stream_chunks():
                 if self._session.status != "running":
                     break
+
+                # Notificar quando começar a processar
+                if first_chunk:
+                    await self._notify("status", {"stage": "transcribing", "message": "A transcrever..."})
+                    first_chunk = False
 
                 # Adicionar ao buffer
                 self._buffer.add(chunk)
@@ -195,6 +235,14 @@ class Orchestrator:
                     "start_time": chunk.start_time
                 })
 
+                # Determinar capítulo atual
+                current_chapter = None
+                for ch in self._session.chapters:
+                    if ch.start_time <= chunk.start_time:
+                        if ch.end_time is None or chunk.start_time < ch.end_time:
+                            current_chapter = ch
+                            break
+
                 # Atualizar progresso
                 self._session.current_time = chunk.start_time + chunk.duration
                 self._session.chunks_processed += 1
@@ -202,7 +250,10 @@ class Orchestrator:
                 await self._notify("progress", {
                     "current_time": self._session.current_time,
                     "total_duration": self._session.video_info.duration,
-                    "percentage": (self._session.current_time / self._session.video_info.duration) * 100
+                    "percentage": (self._session.current_time / self._session.video_info.duration) * 100,
+                    "chunks_processed": self._session.chunks_processed,
+                    "current_chapter": current_chapter.title if current_chapter else None,
+                    "transcriber_queue": self.transcriber.queue_size
                 })
 
             # Esperar que os agentes terminem
