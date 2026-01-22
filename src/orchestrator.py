@@ -440,6 +440,30 @@ class Orchestrator:
 
         logger.info(f"Session {self._session.id} stopped")
 
+    async def clear_session(self):
+        """Limpa completamente a sessão e apaga o autosave."""
+        # Parar sessão se estiver a correr
+        await self.stop_session()
+
+        # Apagar ficheiro de autosave
+        try:
+            save_path = self._get_autosave_path()
+            if save_path.exists():
+                save_path.unlink()
+                logger.info("Autosave file deleted")
+        except Exception as e:
+            logger.error(f"Error deleting autosave: {e}")
+
+        # Resetar estado
+        self._session = None
+        self._capture = None
+        self._buffer.clear()
+
+        # Limpar callbacks (exceto os registados)
+        # Não limpamos os callbacks porque são do frontend
+
+        logger.info("Session cleared completely")
+
     def get_session_state(self) -> Optional[SessionState]:
         """Retorna o estado atual da sessão."""
         return self._session

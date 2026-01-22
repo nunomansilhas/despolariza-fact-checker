@@ -613,6 +613,28 @@ export default function App() {
     }
   }
 
+  const handleClearSession = async () => {
+    if (!confirm('Tens a certeza que queres limpar toda a sessão? Isto apaga todas as transcrições.')) {
+      return
+    }
+
+    try {
+      await fetch('/api/session/clear', { method: 'POST' })
+      // Resetar todo o estado do frontend
+      setSession(null)
+      setTranscripts([])
+      setChapters([])
+      setCustomChapters(null)
+      setSelectedChapter(null)
+      setProgress({ current: 0, total: 0, currentChapter: null, chunksProcessed: 0, totalChunks: 0 })
+      setStatus(null)
+      setError(null)
+      setUrl('')
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const handleSetCronologia = (chapters) => {
     setCustomChapters(chapters)
     setSelectedChapter(chapters[0] || null)
@@ -667,13 +689,23 @@ export default function App() {
             )}
 
             {transcripts.length > 0 && (
-              <button
-                onClick={handleExport}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
-                title="Exportar Markdown"
-              >
-                📥
-              </button>
+              <>
+                <button
+                  onClick={handleExport}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
+                  title="Exportar Markdown"
+                >
+                  📥
+                </button>
+                <button
+                  onClick={handleClearSession}
+                  disabled={session?.status === 'running'}
+                  className="px-4 py-2 bg-red-900 hover:bg-red-800 disabled:bg-gray-600 rounded-lg transition"
+                  title="Limpar sessão"
+                >
+                  🗑️
+                </button>
+              </>
             )}
           </div>
 

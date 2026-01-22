@@ -220,6 +220,16 @@ async def stop_session():
     return {"status": "stopped"}
 
 
+@app.post("/api/session/clear")
+async def clear_session():
+    """Limpa completamente a sessão e apaga dados guardados."""
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    await orchestrator.clear_session()
+    return {"status": "cleared"}
+
+
 @app.get("/api/export")
 async def export_analysis():
     """Exporta análise em Markdown."""
