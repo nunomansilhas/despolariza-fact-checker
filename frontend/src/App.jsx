@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
-// Hook para WebSocket
+// Hook para WebSocket com reconexão melhorada
 function useWebSocket(url) {
   const [messages, setMessages] = useState([])
   const [isConnected, setIsConnected] = useState(false)
+  const [reconnectCount, setReconnectCount] = useState(0)
   const wsRef = useRef(null)
 
   const connect = useCallback(() => {
@@ -11,6 +12,7 @@ function useWebSocket(url) {
 
     ws.onopen = () => {
       setIsConnected(true)
+      setReconnectCount(0)
       console.log('WebSocket connected')
     }
 
@@ -22,7 +24,10 @@ function useWebSocket(url) {
     ws.onclose = () => {
       setIsConnected(false)
       console.log('WebSocket disconnected')
-      setTimeout(connect, 3000)
+      setReconnectCount(prev => prev + 1)
+      // Reconexão com backoff
+      const delay = Math.min(1000 * Math.pow(2, reconnectCount), 10000)
+      setTimeout(connect, delay)
     }
 
     ws.onerror = (error) => {
@@ -30,7 +35,7 @@ function useWebSocket(url) {
     }
 
     wsRef.current = ws
-  }, [url])
+  }, [url, reconnectCount])
 
   useEffect(() => {
     connect()
@@ -41,7 +46,7 @@ function useWebSocket(url) {
     }
   }, [connect])
 
-  return { messages, isConnected }
+  return { messages, isConnected, reconnectCount }
 }
 
 // Formatar tempo em HH:MM:SS ou MM:SS
@@ -91,25 +96,47 @@ function parseCronologia(text) {
   return chapters
 }
 
-// Componente de Status
-function StatusBanner({ status }) {
+// Spinner animado
+function Spinner({ size = 'sm' }) {
+  const sizeClass = size === 'sm' ? 'w-4 h-4' : 'w-6 h-6'
+  return (
+    <div className={`${sizeClass} border-2 border-gray-400 border-t-white rounded-full animate-spin`} />
+  )
+}
+
+// Componente de Status melhorado
+function StatusBanner({ status, startTime }) {
   const stageInfo = {
-    'fetching_info': { emoji: '🔍', color: 'bg-blue-900/50' },
-    'parsing_chapters': { emoji: '📑', color: 'bg-blue-900/50' },
-    'loading_model': { emoji: '🧠', color: 'bg-yellow-900/50' },
-    'model_ready': { emoji: '✓', color: 'bg-green-900/50' },
-    'downloading': { emoji: '📥', color: 'bg-orange-900/50' },
-    'transcribing': { emoji: '🎤', color: 'bg-purple-900/50' },
+    'fetching_info': { emoji: '🔍', color: 'bg-blue-900/50', label: 'A obter info' },
+    'parsing_chapters': { emoji: '📑', color: 'bg-blue-900/50', label: 'A processar capítulos' },
+    'loading_model': { emoji: '🧠', color: 'bg-yellow-900/50', label: 'A carregar modelo' },
+    'model_ready': { emoji: '✓', color: 'bg-green-900/50', label: 'Modelo pronto' },
+    'downloading': { emoji: '📥', color: 'bg-orange-900/50', label: 'A descarregar' },
+    'transcribing': { emoji: '🎤', color: 'bg-purple-900/50', label: 'A transcrever' },
   }
 
   if (!status) return null
 
-  const info = stageInfo[status.stage] || { emoji: '⏳', color: 'bg-gray-900/50' }
+  const info = stageInfo[status.stage] || { emoji: '⏳', color: 'bg-gray-900/50', label: 'A processar' }
+  const isLoading = status.stage !== 'model_ready'
+
+  // Calcular tempo decorrido
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!startTime || !isLoading) return
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [startTime, isLoading])
+
+  const elapsedStr = elapsed > 0 ? `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}` : ''
 
   return (
-    <div className={`${info.color} text-gray-200 px-4 py-2 flex items-center gap-2`}>
-      <span className="animate-pulse">{info.emoji}</span>
-      <span>{status.message}</span>
+    <div className={`${info.color} text-gray-200 px-4 py-2 flex items-center gap-3`}>
+      {isLoading ? <Spinner /> : <span>{info.emoji}</span>}
+      <span className="flex-1">{status.message}</span>
+      {elapsedStr && <span className="text-xs text-gray-400">{elapsedStr}</span>}
     </div>
   )
 }
@@ -335,6 +362,77 @@ function ChapterTranscriptPanel({ chapter, transcripts, nextChapterStart }) {
   )
 }
 
+// Componente de Progresso melhorado
+function ProgressBar({ progress, startTime }) {
+  const progressPercent = progress.total > 0
+    ? Math.min(100, (progress.current / progress.total) * 100)
+    : 0
+
+  // Calcular velocidade e tempo estimado
+  const [stats, setStats] = useState({ speed: 0, eta: null })
+
+  useEffect(() => {
+    if (!startTime || progress.chunksProcessed === 0) return
+
+    const elapsed = (Date.now() - startTime) / 1000 // em segundos
+    const speed = progress.chunksProcessed / (elapsed / 60) // chunks por minuto
+
+    if (progress.totalChunks && speed > 0) {
+      const remaining = progress.totalChunks - progress.chunksProcessed
+      const etaSeconds = (remaining / speed) * 60
+      setStats({ speed, eta: etaSeconds })
+    } else {
+      setStats({ speed, eta: null })
+    }
+  }, [progress.chunksProcessed, progress.totalChunks, startTime])
+
+  const formatEta = (seconds) => {
+    if (!seconds || seconds < 0) return ''
+    const m = Math.floor(seconds / 60)
+    const s = Math.floor(seconds % 60)
+    return `~${m}:${s.toString().padStart(2, '0')} restante`
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto mt-3 space-y-1">
+      {/* Barra de progresso */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 bg-gray-700 rounded-full h-2.5 overflow-hidden">
+          <div
+            className="bg-gradient-to-r from-blue-600 to-blue-400 h-full rounded-full transition-all duration-500 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <span className="text-sm text-gray-300 whitespace-nowrap font-mono">
+          {progressPercent.toFixed(1)}%
+        </span>
+      </div>
+
+      {/* Estatísticas */}
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <div className="flex items-center gap-4">
+          <span>
+            ⏱️ {formatTime(progress.current)} / {formatTime(progress.total)}
+          </span>
+          <span>
+            📦 {progress.chunksProcessed}{progress.totalChunks ? ` / ${progress.totalChunks}` : ''} chunks
+          </span>
+          {stats.speed > 0 && (
+            <span>
+              ⚡ {stats.speed.toFixed(1)} chunks/min
+            </span>
+          )}
+        </div>
+        {stats.eta && (
+          <span className="text-blue-400">
+            {formatEta(stats.eta)}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Modal para input de cronologia
 function CronologiaModal({ isOpen, onClose, onSubmit, initialValue }) {
   const [text, setText] = useState(initialValue || '')
@@ -428,8 +526,9 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showCronologiaModal, setShowCronologiaModal] = useState(false)
+  const [sessionStartTime, setSessionStartTime] = useState(null)
 
-  const { messages, isConnected } = useWebSocket(
+  const { messages, isConnected, reconnectCount } = useWebSocket(
     `ws://${window.location.hostname}:3068/ws`
   )
 
@@ -558,6 +657,7 @@ export default function App() {
     setTranscripts([])
     setChapters([])
     setSelectedChapter(null)
+    setSessionStartTime(Date.now())
     setStatus({ stage: 'fetching_info', message: 'A iniciar...' })
 
     try {
@@ -640,9 +740,15 @@ export default function App() {
     setSelectedChapter(chapters[0] || null)
   }
 
-  const progressPercent = progress.total > 0
-    ? Math.min(100, (progress.current / progress.total) * 100)
-    : 0
+  // Auto-scroll para o capítulo atual quando está a transcrever
+  useEffect(() => {
+    if (progress.currentChapter && session?.status === 'running') {
+      const currentCh = activeChapters.find(ch => ch.title === progress.currentChapter)
+      if (currentCh && currentCh.id !== selectedChapter?.id) {
+        setSelectedChapter(currentCh)
+      }
+    }
+  }, [progress.currentChapter, activeChapters, session?.status])
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-900 text-gray-100">
@@ -709,8 +815,12 @@ export default function App() {
             )}
           </div>
 
-          <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
-               title={isConnected ? 'Conectado' : 'Desconectado'} />
+          <div
+            className={`w-3 h-3 rounded-full transition-colors ${
+              isConnected ? 'bg-green-500' : reconnectCount > 0 ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+            }`}
+            title={isConnected ? 'Conectado' : reconnectCount > 0 ? `A reconectar (${reconnectCount})...` : 'Desconectado'}
+          />
         </div>
 
         {/* Custom chapters indicator */}
@@ -731,29 +841,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Progress bar */}
+        {/* Progress bar melhorado */}
         {session && progress.total > 0 && (
-          <div className="max-w-7xl mx-auto mt-3">
-            <div className="flex items-center gap-3">
-              <div className="flex-1 bg-gray-700 rounded-full h-2">
-                <div
-                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
-              <span className="text-sm text-gray-400 whitespace-nowrap">
-                {formatTime(progress.current)} / {formatTime(progress.total)}
-              </span>
-              <span className="text-xs text-gray-500">
-                ({progress.chunksProcessed}{progress.totalChunks ? ` / ${progress.totalChunks}` : ''})
-              </span>
-            </div>
-          </div>
+          <ProgressBar progress={progress} startTime={sessionStartTime} />
         )}
       </header>
 
       {/* Status banner */}
-      <StatusBanner status={status} />
+      <StatusBanner status={status} startTime={sessionStartTime} />
 
       {/* Error banner */}
       {error && (
