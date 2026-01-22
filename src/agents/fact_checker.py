@@ -1,13 +1,12 @@
-"""Agente de fact-checking usando Claude."""
+"""Agente de fact-checking usando Ollama (local) ou Claude (API)."""
 
 import asyncio
 import json
 import re
+import httpx
 from typing import Optional
 from uuid import uuid4
 import logging
-
-from anthropic import AsyncAnthropic
 
 from .base import BaseAgent
 from ..models.transcript import TranscriptChunk
@@ -37,8 +36,7 @@ Texto a analisar:
 {text}
 ---
 
-Responde em JSON com este formato exacto:
-```json
+Responde APENAS em JSON válido com este formato exacto (sem texto adicional):
 {{
   "claims": [
     {{
@@ -49,7 +47,6 @@ Responde em JSON com este formato exacto:
     }}
   ]
 }}
-```
 
 Se não houver afirmações verificáveis, responde com {{"claims": []}}
 """
@@ -66,36 +63,128 @@ Pesquisa nas tuas fontes de conhecimento e avalia:
 3. Se é FALSO - a afirmação contradiz os factos conhecidos
 4. Se é INCONCLUSIVO - não há informação suficiente para verificar
 
-Responde em JSON:
-```json
+Responde APENAS em JSON válido (sem texto adicional):
 {{
   "verdict": "true|partial|false|inconclusive",
-  "confidence": 0.0-1.0,
+  "confidence": 0.7,
   "explanation": "Explicação detalhada em português",
   "corrected_info": "Informação correta se aplicável, ou null",
   "sources": ["Nome das fontes consultadas"]
 }}
-```
 
 Sê rigoroso e imparcial. Se não tiveres certeza, marca como inconclusivo.
 """
 
 
+class OllamaClient:
+    """Cliente simples para Ollama API."""
+
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.1:8b"):
+        self.base_url = base_url
+        self.model = model
+        self._client = httpx.AsyncClient(timeout=120.0)
+
+    async def generate(self, prompt: str) -> str:
+        """Gera resposta do modelo."""
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,  # Mais determinístico para fact-checking
+                        "num_predict": 2000,
+                    }
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "")
+        except Exception as e:
+            logger.error(f"Ollama error: {e}")
+            raise
+
+    async def close(self):
+        await self._client.aclose()
+
+
 class FactCheckerAgent(BaseAgent):
-    """Agente que verifica factos usando Claude."""
+    """Agente que verifica factos usando Ollama (local) ou Claude (API)."""
 
     def __init__(self, api_key: Optional[str] = None):
         super().__init__("fact_checker")
         self._api_key = api_key or settings.anthropic_api_key
-        self._client: Optional[AsyncAnthropic] = None
+        self._ollama_client: Optional[OllamaClient] = None
+        self._anthropic_client = None
 
-    async def _get_client(self) -> AsyncAnthropic:
-        """Obtém ou cria cliente Anthropic."""
-        if self._client is None:
-            if not self._api_key:
-                raise ValueError("ANTHROPIC_API_KEY not configured")
-            self._client = AsyncAnthropic(api_key=self._api_key)
-        return self._client
+    async def start(self):
+        """Inicia o agente."""
+        await super().start()
+
+        if settings.ollama_enabled:
+            self._ollama_client = OllamaClient(
+                base_url=settings.ollama_base_url,
+                model=settings.ollama_model
+            )
+            logger.info(f"Fact-checker using Ollama ({settings.ollama_model})")
+        else:
+            logger.info("Fact-checker using Anthropic Claude")
+
+    async def stop(self):
+        """Para o agente."""
+        if self._ollama_client:
+            await self._ollama_client.close()
+        await super().stop()
+
+    async def _generate(self, prompt: str) -> str:
+        """Gera resposta usando Ollama ou Anthropic."""
+        if settings.ollama_enabled and self._ollama_client:
+            return await self._ollama_client.generate(prompt)
+        else:
+            # Fallback para Anthropic
+            if not self._anthropic_client:
+                from anthropic import AsyncAnthropic
+                if not self._api_key:
+                    raise ValueError("ANTHROPIC_API_KEY not configured")
+                self._anthropic_client = AsyncAnthropic(api_key=self._api_key)
+
+            response = await self._anthropic_client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text
+
+    def _extract_json(self, text: str) -> dict:
+        """Extrai JSON da resposta (com ou sem markdown)."""
+        # Tentar extrair de bloco markdown
+        json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+        if json_match:
+            text = json_match.group(1)
+
+        # Limpar e parsear
+        text = text.strip()
+
+        # Encontrar o início do JSON
+        start = text.find('{')
+        if start == -1:
+            return {"claims": []}
+
+        # Encontrar o fim do JSON (último })
+        end = text.rfind('}')
+        if end == -1:
+            return {"claims": []}
+
+        json_str = text[start:end+1]
+
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parse error: {e}")
+            logger.debug(f"Attempted to parse: {json_str[:200]}...")
+            return {"claims": []}
 
     async def process(self, item: TranscriptChunk) -> list[FactCheckResult]:
         """
@@ -114,7 +203,7 @@ class FactCheckerAgent(BaseAgent):
         claims = await self._extract_claims(item)
 
         if not claims:
-            logger.info(f"No verifiable claims found in chunk {item.chunk_id}")
+            logger.debug(f"No verifiable claims found in chunk {item.chunk_id}")
             return []
 
         logger.info(f"Found {len(claims)} claims in chunk {item.chunk_id}")
@@ -140,25 +229,9 @@ class FactCheckerAgent(BaseAgent):
     async def _extract_claims(self, chunk: TranscriptChunk) -> list[Claim]:
         """Extrai claims verificáveis do texto."""
         try:
-            client = await self._get_client()
-
             prompt = EXTRACT_CLAIMS_PROMPT.format(text=chunk.text)
-
-            response = await client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}]
-            )
-
-            # Extrair JSON da resposta
-            content = response.content[0].text
-            json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-
-            if json_match:
-                data = json.loads(json_match.group(1))
-            else:
-                # Tentar parsear directamente
-                data = json.loads(content)
+            response = await self._generate(prompt)
+            data = self._extract_json(response)
 
             claims = []
             for i, claim_data in enumerate(data.get("claims", [])):
@@ -176,13 +249,14 @@ class FactCheckerAgent(BaseAgent):
 
                 claim = Claim(
                     id=str(uuid4()),
-                    text=claim_data["text"],
+                    text=claim_data.get("text", ""),
                     timestamp=timestamp,
                     chunk_id=chunk.chunk_id,
                     context=claim_data.get("context"),
                     is_verifiable=True
                 )
-                claims.append(claim)
+                if claim.text:  # Só adicionar se tiver texto
+                    claims.append(claim)
 
             return claims
 
@@ -193,41 +267,34 @@ class FactCheckerAgent(BaseAgent):
     async def _verify_claim(self, claim: Claim) -> FactCheckResult:
         """Verifica uma claim individual."""
         try:
-            client = await self._get_client()
-
             prompt = VERIFY_CLAIM_PROMPT.format(
                 claim=claim.text,
                 context=claim.context or "Podcast político português"
             )
 
-            response = await client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=1500,
-                messages=[{"role": "user", "content": prompt}]
-            )
-
-            content = response.content[0].text
-            json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-
-            if json_match:
-                data = json.loads(json_match.group(1))
-            else:
-                data = json.loads(content)
+            response = await self._generate(prompt)
+            data = self._extract_json(response)
 
             # Mapear verdict
             verdict_map = {
                 "true": Verdict.TRUE,
+                "verdadeiro": Verdict.TRUE,
                 "partial": Verdict.PARTIAL,
+                "parcial": Verdict.PARTIAL,
+                "parcialmente": Verdict.PARTIAL,
                 "false": Verdict.FALSE,
+                "falso": Verdict.FALSE,
                 "inconclusive": Verdict.INCONCLUSIVE,
+                "inconclusivo": Verdict.INCONCLUSIVE,
             }
-            verdict = verdict_map.get(data.get("verdict", "").lower(), Verdict.INCONCLUSIVE)
+            verdict_str = str(data.get("verdict", "inconclusive")).lower().strip()
+            verdict = verdict_map.get(verdict_str, Verdict.INCONCLUSIVE)
 
             result = FactCheckResult(
                 claim=claim,
                 verdict=verdict,
                 confidence=float(data.get("confidence", 0.5)),
-                explanation=data.get("explanation", ""),
+                explanation=data.get("explanation", "Sem explicação disponível"),
                 sources=data.get("sources", []),
                 corrected_info=data.get("corrected_info"),
             )
@@ -255,7 +322,6 @@ class FactCheckerAgent(BaseAgent):
 
 async def test_fact_checker():
     """Teste básico do fact-checker."""
-    # Precisa de ANTHROPIC_API_KEY configurada
     agent = FactCheckerAgent()
 
     chunk = TranscriptChunk(
@@ -271,10 +337,11 @@ async def test_fact_checker():
 
     await agent.start()
 
-    agent.on_result(lambda r: print(f"Results: {len(r)} fact-checks"))
-
-    await agent.submit(chunk)
-    await asyncio.sleep(30)  # Esperar processamento
+    results = await agent.process(chunk)
+    for r in results:
+        print(f"{r.verdict.emoji} {r.claim.text}")
+        print(f"   → {r.explanation}")
+        print()
 
     await agent.stop()
     print(f"Stats: {agent.stats}")
