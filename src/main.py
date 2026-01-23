@@ -514,6 +514,81 @@ async def identify_speakers(request: Request):
         await identifier.stop()
 
 
+@app.post("/api/poligrafo")
+async def run_poligrafo(request: Request):
+    """
+    Executa análise completa Polígrafo:
+    1. Separa transcrição por speaker
+    2. Extrai claims factuais
+    3. Verifica cada claim
+    """
+    global orchestrator
+
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    data = await request.json()
+    speaker_names = data.get("speaker_names", ["Entrevistador", "Convidado"])
+
+    # Obter transcrição
+    session = orchestrator.get_session()
+
+    if not session:
+        autosave = orchestrator.load_autosave()
+        if not autosave:
+            raise HTTPException(status_code=404, detail="No session data")
+        transcripts = autosave.get("transcripts", [])
+        chapters = autosave.get("chapters", [])
+    else:
+        transcripts = [_serialize(t) for t in session.transcripts]
+        chapters = [_serialize(c) for c in session.chapters]
+
+    if not transcripts:
+        raise HTTPException(status_code=400, detail="No transcripts to process")
+
+    # Juntar todo o texto
+    full_transcript = "\n\n".join([
+        f"[{t.get('start_time', 0):.0f}s] {t.get('text', '')}"
+        for t in transcripts
+    ])
+
+    # Criar agente Polígrafo
+    from .agents.poligrafo import PoligrafoAgent
+    poligrafo = PoligrafoAgent()
+    await poligrafo.start()
+
+    try:
+        # Callback de progresso
+        async def on_progress(stage, current, total):
+            await broadcast_message({
+                "type": "poligrafo_progress",
+                "data": {
+                    "stage": stage,
+                    "current": current,
+                    "total": total
+                }
+            })
+
+        # Executar análise completa
+        result = await poligrafo.analyze_full(
+            full_transcript,
+            chapters,
+            speaker_names,
+            on_progress
+        )
+
+        # Broadcast resultado
+        await broadcast_message({
+            "type": "poligrafo_complete",
+            "data": result
+        })
+
+        return result
+
+    finally:
+        await poligrafo.stop()
+
+
 @app.get("/api/export")
 async def export_analysis():
     """Exporta análise em Markdown."""

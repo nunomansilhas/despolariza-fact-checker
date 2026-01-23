@@ -110,6 +110,11 @@ export default function App() {
   const [localAudioPath, setLocalAudioPath] = useState(() => localStorage.getItem('localAudioPath') || '')
   const [localAudioTitle, setLocalAudioTitle] = useState('')
 
+  // Polígrafo state
+  const [poligrafoResult, setPoligrafoResult] = useState(null)
+  const [poligrafoProgress, setPoligrafoProgress] = useState(null) // { stage, current, total }
+  const [showPoligrafo, setShowPoligrafo] = useState(false)
+
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
 
@@ -189,6 +194,12 @@ export default function App() {
     if (msg.type === 'speaker_identification_complete') {
       setIdentifiedSpeakers(msg.data.chapters)
       setIdentifyingProgress(null)
+    }
+    if (msg.type === 'poligrafo_progress') setPoligrafoProgress(msg.data)
+    if (msg.type === 'poligrafo_complete') {
+      setPoligrafoResult(msg.data)
+      setPoligrafoProgress(null)
+      setShowPoligrafo(true)
     }
   }, [messages])
 
@@ -349,6 +360,28 @@ export default function App() {
     setIdentifyingProgress(null)
   }
 
+  const handlePoligrafo = async () => {
+    setPoligrafoProgress({ stage: 'starting', current: 0, total: 3 })
+    setError(null)
+
+    try {
+      const res = await fetch('/api/poligrafo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speaker_names: [speakerNames.speaker0, speakerNames.speaker1]
+        })
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Erro no Polígrafo')
+      const data = await res.json()
+      setPoligrafoResult(data)
+      setShowPoligrafo(true)
+    } catch (e) {
+      setError(e.message)
+    }
+    setPoligrafoProgress(null)
+  }
+
   const handleVerifyClaim = async (claim, chapterTitle) => {
     const claimKey = `${chapterTitle}::${claim}`
     setVerifyingClaim(claimKey)
@@ -446,6 +479,17 @@ export default function App() {
               title="Identificar quem fala usando AI"
             >
               {identifyingProgress ? `🔄 ${identifyingProgress.current}/${identifyingProgress.total}` : '🎙️ ID Speakers'}
+            </button>
+          )}
+
+          {transcripts.length > 0 && session?.status !== 'running' && (
+            <button
+              onClick={handlePoligrafo}
+              disabled={poligrafoProgress !== null}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 rounded text-sm font-medium"
+              title="Análise completa: Separar speakers, extrair claims, verificar factos"
+            >
+              {poligrafoProgress ? `🔄 ${poligrafoProgress.stage}` : '🔍 Polígrafo'}
             </button>
           )}
 
@@ -866,6 +910,104 @@ export default function App() {
           <span>{transcripts.length} segmentos • {transcripts.reduce((a, t) => a + t.text.length, 0).toLocaleString()} caracteres</span>
           <span>{conversation.filter(g => g.speaker).length > 0 ? `${new Set(conversation.map(g => g.speaker)).size} locutores` : 'Sem diarização'}</span>
         </footer>
+      )}
+
+      {/* Polígrafo Modal */}
+      {showPoligrafo && poligrafoResult && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-800 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold">🔍 Polígrafo - Verificação de Factos</h2>
+                <p className="text-sm text-gray-500">
+                  {poligrafoResult.summary?.total_claims || 0} claims analisados
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPoligrafo(false)}
+                className="text-gray-500 hover:text-white text-2xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Summary */}
+            <div className="p-4 bg-gray-800/50 flex gap-4 justify-center">
+              {Object.entries(poligrafoResult.summary?.verdicts || {}).map(([verdict, count]) => {
+                const emoji = { VERDADEIRO: '✅', FALSO: '❌', PARCIALMENTE_VERDADEIRO: '⚠️', NAO_VERIFICAVEL: '❓' }[verdict] || '?'
+                const color = { VERDADEIRO: 'text-green-400', FALSO: 'text-red-400', PARCIALMENTE_VERDADEIRO: 'text-yellow-400', NAO_VERIFICAVEL: 'text-gray-400' }[verdict] || 'text-gray-400'
+                return (
+                  <div key={verdict} className={`text-center ${color}`}>
+                    <div className="text-2xl">{emoji}</div>
+                    <div className="text-xl font-bold">{count}</div>
+                    <div className="text-xs">{verdict.replace(/_/g, ' ')}</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Claims list */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {(poligrafoResult.verdicts || []).map((v, i) => {
+                const emoji = { VERDADEIRO: '✅', FALSO: '❌', PARCIALMENTE_VERDADEIRO: '⚠️', NAO_VERIFICAVEL: '❓' }[v.verdict] || '?'
+                const borderColor = { VERDADEIRO: 'border-green-600', FALSO: 'border-red-600', PARCIALMENTE_VERDADEIRO: 'border-yellow-600', NAO_VERIFICAVEL: 'border-gray-600' }[v.verdict] || 'border-gray-600'
+
+                return (
+                  <div key={i} className={`bg-gray-800 rounded-lg p-4 border-l-4 ${borderColor}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{emoji}</span>
+                      <div className="flex-1">
+                        <div className="font-medium text-white">{v.claim}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {v.speaker && <span className="mr-2">👤 {v.speaker}</span>}
+                          {v.chapter && <span>📑 {v.chapter}</span>}
+                        </div>
+                        <div className="text-sm text-gray-300 mt-2">{v.explanation}</div>
+                        {v.correction && (
+                          <div className="text-sm text-yellow-400 mt-1">
+                            ✏️ Correção: {v.correction}
+                          </div>
+                        )}
+                        {v.sources?.length > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            📚 {v.sources.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                      {v.confidence > 0 && (
+                        <div className="text-xs text-gray-500">
+                          {v.confidence}%
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-800 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  const md = poligrafoResult.verdicts.map(v =>
+                    `## ${v.verdict === 'VERDADEIRO' ? '✅' : v.verdict === 'FALSO' ? '❌' : v.verdict === 'PARCIALMENTE_VERDADEIRO' ? '⚠️' : '❓'} ${v.claim}\n\n**Speaker:** ${v.speaker}\n**Capítulo:** ${v.chapter}\n**Veredicto:** ${v.verdict}\n\n${v.explanation}\n${v.correction ? `\n**Correção:** ${v.correction}` : ''}\n`
+                  ).join('\n---\n\n')
+                  navigator.clipboard.writeText(md)
+                }}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+              >
+                📋 Copiar Markdown
+              </button>
+              <button
+                onClick={() => setShowPoligrafo(false)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
