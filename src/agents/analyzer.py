@@ -163,42 +163,60 @@ class AnalyzerAgent:
         logger.info(f"Analysis complete: {len(analysis.key_topics)} topics, {len(analysis.key_claims)} claims")
         return analysis
 
-    async def analyze_all_chapters(self, chapters: list[dict], transcripts: list[dict],
-                                    on_progress=None) -> list[ChapterInsights]:
-        """Analisa todos os capítulos."""
-        results = []
+    async def _analyze_single_chapter(self, i: int, chapter: dict, chapters: list[dict],
+                                       transcripts: list[dict]) -> ChapterInsights:
+        """Analisa um único capítulo (para uso em paralelo)."""
+        ch_start = chapter.get("start_time", 0)
+        ch_end = chapter.get("end_time") or (chapters[i+1]["start_time"] if i < len(chapters)-1 else float('inf'))
 
-        for i, chapter in enumerate(chapters):
-            # Obter texto do capítulo
-            ch_start = chapter.get("start_time", 0)
-            ch_end = chapter.get("end_time") or (chapters[i+1]["start_time"] if i < len(chapters)-1 else float('inf'))
+        chapter_text = ' '.join(
+            t.get("text", "") for t in transcripts
+            if t.get("start_time", 0) >= ch_start and t.get("start_time", 0) < ch_end
+        )
 
-            chapter_text = ' '.join(
-                t.get("text", "") for t in transcripts
-                if t.get("start_time", 0) >= ch_start and t.get("start_time", 0) < ch_end
+        try:
+            return await self.analyze_chapter(
+                chapter_id=chapter.get("id", f"ch_{i}"),
+                chapter_title=chapter.get("title", f"Capítulo {i+1}"),
+                text=chapter_text
+            )
+        except Exception as e:
+            logger.error(f"Error analyzing chapter {chapter.get('title')}: {e}")
+            return ChapterInsights(
+                chapter_id=chapter.get("id", f"ch_{i}"),
+                chapter_title=chapter.get("title", f"Capítulo {i+1}"),
+                summary=f"Erro na análise: {str(e)}",
+                key_topics=[],
+                key_claims=[],
+                speakers_mentioned=[],
+                sentiment="neutral"
             )
 
-            try:
-                analysis = await self.analyze_chapter(
-                    chapter_id=chapter.get("id", f"ch_{i}"),
-                    chapter_title=chapter.get("title", f"Capítulo {i+1}"),
-                    text=chapter_text
-                )
-                results.append(analysis)
+    async def analyze_all_chapters(self, chapters: list[dict], transcripts: list[dict],
+                                    on_progress=None, max_concurrent: int = 2) -> list[ChapterInsights]:
+        """Analisa todos os capítulos (em paralelo com limite de concorrência)."""
+        semaphore = asyncio.Semaphore(max_concurrent)
+        results = [None] * len(chapters)
+        completed = [0]  # Usar lista para permitir modificação em closure
+
+        async def analyze_with_semaphore(i: int, chapter: dict):
+            async with semaphore:
+                logger.info(f"Starting analysis {i+1}/{len(chapters)}: {chapter.get('title')}")
+                result = await self._analyze_single_chapter(i, chapter, chapters, transcripts)
+                results[i] = result
+                completed[0] += 1
 
                 if on_progress:
-                    await on_progress(i + 1, len(chapters), analysis)
+                    await on_progress(completed[0], len(chapters), result)
 
-            except Exception as e:
-                logger.error(f"Error analyzing chapter {chapter.get('title')}: {e}")
-                results.append(ChapterInsights(
-                    chapter_id=chapter.get("id", f"ch_{i}"),
-                    chapter_title=chapter.get("title", f"Capítulo {i+1}"),
-                    summary=f"Erro na análise: {str(e)}",
-                    key_topics=[],
-                    key_claims=[],
-                    speakers_mentioned=[],
-                    sentiment="neutral"
-                ))
+                return result
+
+        # Lançar todas as tarefas em paralelo (semaphore controla concorrência)
+        tasks = [
+            analyze_with_semaphore(i, chapter)
+            for i, chapter in enumerate(chapters)
+        ]
+
+        await asyncio.gather(*tasks)
 
         return results

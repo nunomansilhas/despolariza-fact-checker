@@ -279,7 +279,10 @@ async def analyze_chapters():
                 }
             })
 
-        results = await analyzer.analyze_all_chapters(chapters, transcripts, on_progress)
+        results = await analyzer.analyze_all_chapters(
+            chapters, transcripts, on_progress,
+            max_concurrent=settings.analyzer_max_concurrent
+        )
 
         # Broadcast complete
         await broadcast_message({

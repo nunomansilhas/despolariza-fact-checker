@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     ollama_enabled: bool = True  # Usar Ollama em vez de Anthropic
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"  # Modelo para fact-checking
+    analyzer_max_concurrent: int = 2  # Capítulos a analisar em paralelo (1-4)
 
     # Feature flags
     fact_check_enabled: bool = True
