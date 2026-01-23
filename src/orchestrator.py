@@ -345,11 +345,8 @@ class Orchestrator:
                     if self._session.chunks_processed % 5 == 0:
                         self._autosave()
 
-                    # Enviar para análise (fact-check e retórica) em paralelo
-                    if settings.fact_check_enabled:
-                        asyncio.create_task(self._process_fact_check(transcript))
-                    if settings.rhetoric_analysis_enabled:
-                        asyncio.create_task(self._process_rhetoric(transcript))
+                    # NOTA: Fact-check e análise retórica são agora manuais
+                    # O user clica no botão "Verificar Claims" na tab Análise
 
                 except Exception as e:
                     logger.error(f"Error processing chunk {chunk.chunk_id}: {e}")

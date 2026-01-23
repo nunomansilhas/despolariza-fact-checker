@@ -97,6 +97,8 @@ export default function App() {
   const [analyses, setAnalyses] = useState([]) // Análises dos capítulos
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
+  const [claimResults, setClaimResults] = useState({}) // { "claim_text": { status, verdict, explanation } }
+  const [verifyingClaim, setVerifyingClaim] = useState(null) // claim being verified
 
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
@@ -212,6 +214,7 @@ export default function App() {
     setUrl('')
     setSelectedChapter(null)
     setAnalyses([])
+    setClaimResults({})
   }
 
   const handleAnalyze = async () => {
@@ -229,6 +232,38 @@ export default function App() {
       setError(e.message)
     }
     setAnalyzing(false)
+  }
+
+  const handleVerifyClaim = async (claim, chapterTitle) => {
+    const claimKey = `${chapterTitle}::${claim}`
+    setVerifyingClaim(claimKey)
+    setClaimResults(prev => ({ ...prev, [claimKey]: { status: 'verifying' } }))
+
+    try {
+      const res = await fetch('/api/fact-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ claim, context: chapterTitle })
+      })
+
+      if (!res.ok) throw new Error((await res.json()).detail || 'Erro na verificação')
+      const data = await res.json()
+
+      setClaimResults(prev => ({
+        ...prev,
+        [claimKey]: {
+          status: 'done',
+          verdict: data.verdict, // true, false, partial, inconclusive
+          explanation: data.explanation
+        }
+      }))
+    } catch (e) {
+      setClaimResults(prev => ({
+        ...prev,
+        [claimKey]: { status: 'error', error: e.message }
+      }))
+    }
+    setVerifyingClaim(null)
   }
 
   const progressPct = progress.total > 0 ? (progress.current / progress.total) * 100 : 0
@@ -535,13 +570,57 @@ export default function App() {
                     {analysis.key_claims?.length > 0 && (
                       <div>
                         <span className="text-xs text-gray-500">Afirmações verificáveis:</span>
-                        <ul className="mt-1 space-y-1">
-                          {analysis.key_claims.map((claim, j) => (
-                            <li key={j} className="text-xs text-orange-300 flex items-start gap-2">
-                              <span className="text-orange-500">•</span>
-                              {claim}
-                            </li>
-                          ))}
+                        <ul className="mt-2 space-y-2">
+                          {analysis.key_claims.map((claim, j) => {
+                            const claimKey = `${analysis.chapter_title}::${claim}`
+                            const result = claimResults[claimKey]
+                            const isVerifying = verifyingClaim === claimKey
+
+                            return (
+                              <li key={j} className="text-sm bg-gray-900/50 rounded-lg p-2">
+                                <div className="flex items-start gap-2">
+                                  <span className="text-orange-500 mt-0.5">•</span>
+                                  <span className="flex-1 text-orange-300">{claim}</span>
+
+                                  {!result && (
+                                    <button
+                                      onClick={() => handleVerifyClaim(claim, analysis.chapter_title)}
+                                      disabled={isVerifying}
+                                      className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded"
+                                    >
+                                      {isVerifying ? '⏳' : '🔍 Verificar'}
+                                    </button>
+                                  )}
+
+                                  {result?.status === 'done' && (
+                                    <span className={`px-2 py-1 text-xs rounded font-bold ${
+                                      result.verdict === 'true' ? 'bg-green-900 text-green-300' :
+                                      result.verdict === 'false' ? 'bg-red-900 text-red-300' :
+                                      result.verdict === 'partial' ? 'bg-yellow-900 text-yellow-300' :
+                                      'bg-gray-700 text-gray-300'
+                                    }`}>
+                                      {result.verdict === 'true' ? '✓ Verdade' :
+                                       result.verdict === 'false' ? '✗ Falso' :
+                                       result.verdict === 'partial' ? '◐ Parcial' :
+                                       '? Inconclusivo'}
+                                    </span>
+                                  )}
+
+                                  {result?.status === 'error' && (
+                                    <span className="px-2 py-1 text-xs bg-red-900 text-red-300 rounded">
+                                      ❌ Erro
+                                    </span>
+                                  )}
+                                </div>
+
+                                {result?.explanation && (
+                                  <p className="mt-2 text-xs text-gray-400 pl-4 border-l-2 border-gray-700">
+                                    {result.explanation}
+                                  </p>
+                                )}
+                              </li>
+                            )
+                          })}
                         </ul>
                       </div>
                     )}

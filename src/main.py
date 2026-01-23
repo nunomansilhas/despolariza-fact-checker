@@ -324,6 +324,73 @@ async def analyze_chapters():
         await analyzer.stop()
 
 
+@app.post("/api/fact-check")
+async def fact_check_claim(request: Request):
+    """Verifica uma claim específica."""
+    data = await request.json()
+    claim = data.get("claim")
+    context = data.get("context", "")
+
+    if not claim:
+        raise HTTPException(status_code=400, detail="Claim is required")
+
+    if not settings.ollama_enabled:
+        raise HTTPException(status_code=400, detail="Ollama not enabled")
+
+    import httpx
+
+    prompt = f"""Verifica a seguinte afirmação e determina se é verdadeira, falsa, parcialmente verdadeira ou inconclusiva.
+
+CONTEXTO: {context}
+AFIRMAÇÃO: {claim}
+
+Responde APENAS em JSON válido com este formato:
+{{
+  "verdict": "true|false|partial|inconclusive",
+  "explanation": "Explicação breve (1-2 frases) do porquê"
+}}
+
+Baseia-te em factos conhecidos. Se não tiveres certeza, responde "inconclusive"."""
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{settings.ollama_base_url}/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1}
+                }
+            )
+            response.raise_for_status()
+            result_text = response.json().get("response", "")
+
+            # Parse JSON da resposta
+            import json
+            import re
+
+            # Tentar extrair JSON
+            match = re.search(r'\{.*\}', result_text, re.DOTALL)
+            if match:
+                result = json.loads(match.group())
+                return {
+                    "claim": claim,
+                    "verdict": result.get("verdict", "inconclusive"),
+                    "explanation": result.get("explanation", "Não foi possível verificar.")
+                }
+
+            return {
+                "claim": claim,
+                "verdict": "inconclusive",
+                "explanation": "Não foi possível analisar a resposta."
+            }
+
+    except Exception as e:
+        logger.error(f"Fact-check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/export")
 async def export_analysis():
     """Exporta análise em Markdown."""
