@@ -62,6 +62,15 @@ class TranscriberAgent(BaseAgent):
         # Tentar WhisperX primeiro se diarização está ativada
         if settings.enable_diarization and settings.hf_token:
             try:
+                # Workaround para PyTorch 2.6+ (weights_only=True por defeito)
+                import torch
+                try:
+                    from omegaconf import DictConfig, ListConfig, OmegaConf
+                    torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
+                    logger.info("Added omegaconf to torch safe globals")
+                except Exception as e:
+                    logger.warning(f"Could not add omegaconf to safe globals: {e}")
+
                 import whisperx
                 logger.info("Loading WhisperX with diarization support...")
 
