@@ -230,6 +230,97 @@ async def clear_session():
     return {"status": "cleared"}
 
 
+@app.post("/api/analyze")
+async def analyze_chapters():
+    """Analisa todos os capítulos - extrai resumos, tópicos e afirmações."""
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    session = orchestrator.get_session_state()
+    if not session:
+        # Tentar carregar do autosave
+        autosave = orchestrator.load_autosave()
+        if not autosave:
+            raise HTTPException(status_code=404, detail="No session data to analyze")
+
+        transcripts = autosave.get("transcripts", [])
+        chapters = autosave.get("chapters", [])
+    else:
+        transcripts = [_serialize(t) for t in session.transcripts]
+        chapters = [_serialize(c) for c in session.chapters]
+
+    if not transcripts:
+        raise HTTPException(status_code=400, detail="No transcripts to analyze")
+
+    if not chapters:
+        # Se não há capítulos, criar um único capítulo com tudo
+        chapters = [{
+            "id": "ch_0",
+            "title": "Conteúdo Completo",
+            "start_time": 0,
+            "end_time": transcripts[-1].get("end_time", 0) if transcripts else 0
+        }]
+
+    # Criar analyzer
+    from .agents.analyzer import AnalyzerAgent
+    analyzer = AnalyzerAgent()
+    await analyzer.start()
+
+    try:
+        # Broadcast progress
+        async def on_progress(current, total, analysis):
+            await broadcast_message({
+                "type": "analysis_progress",
+                "data": {
+                    "current": current,
+                    "total": total,
+                    "chapter_title": analysis.chapter_title,
+                    "summary": analysis.summary
+                }
+            })
+
+        results = await analyzer.analyze_all_chapters(chapters, transcripts, on_progress)
+
+        # Broadcast complete
+        await broadcast_message({
+            "type": "analysis_complete",
+            "data": {
+                "chapters": [
+                    {
+                        "chapter_id": r.chapter_id,
+                        "chapter_title": r.chapter_title,
+                        "summary": r.summary,
+                        "key_topics": r.key_topics,
+                        "key_claims": r.key_claims,
+                        "speakers_mentioned": r.speakers_mentioned,
+                        "sentiment": r.sentiment
+                    }
+                    for r in results
+                ]
+            }
+        })
+
+        return {
+            "status": "complete",
+            "chapters_analyzed": len(results),
+            "analyses": [
+                {
+                    "chapter_id": r.chapter_id,
+                    "chapter_title": r.chapter_title,
+                    "summary": r.summary,
+                    "key_topics": r.key_topics,
+                    "key_claims": r.key_claims,
+                    "speakers_mentioned": r.speakers_mentioned,
+                    "sentiment": r.sentiment
+                }
+                for r in results
+            ]
+        }
+
+    finally:
+        await analyzer.stop()
+
+
 @app.get("/api/export")
 async def export_analysis():
     """Exporta análise em Markdown."""

@@ -70,8 +70,11 @@ export default function App() {
   const [error, setError] = useState(null)
   const [showCronologia, setShowCronologia] = useState(false)
   const [cronologiaText, setCronologiaText] = useState('')
-  const [activeTab, setActiveTab] = useState('conversa') // conversa | capitulos | factos
+  const [activeTab, setActiveTab] = useState('conversa') // conversa | capitulos | analise
   const [selectedChapter, setSelectedChapter] = useState(null)
+  const [analyses, setAnalyses] = useState([]) // Análises dos capítulos
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
 
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
@@ -103,6 +106,8 @@ export default function App() {
     if (msg.type === 'status') setStatus(msg.data)
     if (msg.type === 'complete') { setSession(s => s ? {...s, status: 'completed'} : null); setStatus(null) }
     if (msg.type === 'error') { setError(msg.message || msg.data); setStatus(null) }
+    if (msg.type === 'analysis_progress') setAnalysisProgress({ current: msg.data.current, total: msg.data.total })
+    if (msg.type === 'analysis_complete') { setAnalyses(msg.data.chapters); setAnalyzing(false); setActiveTab('analise') }
   }, [messages])
 
   // Auto-scroll
@@ -181,6 +186,24 @@ export default function App() {
     setStatus(null)
     setUrl('')
     setSelectedChapter(null)
+    setAnalyses([])
+  }
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true)
+    setAnalysisProgress({ current: 0, total: chapters.length || 1 })
+    setError(null)
+
+    try {
+      const res = await fetch('/api/analyze', { method: 'POST' })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Erro na análise')
+      const data = await res.json()
+      setAnalyses(data.analyses || [])
+      setActiveTab('analise')
+    } catch (e) {
+      setError(e.message)
+    }
+    setAnalyzing(false)
   }
 
   const progressPct = progress.total > 0 ? (progress.current / progress.total) * 100 : 0
@@ -221,6 +244,17 @@ export default function App() {
               className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm font-medium"
             >
               {loading ? '...' : 'Iniciar'}
+            </button>
+          )}
+
+          {transcripts.length > 0 && session?.status !== 'running' && (
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm font-medium"
+              title="Analisar capítulos"
+            >
+              {analyzing ? `🔄 ${analysisProgress.current}/${analysisProgress.total}` : '🧠 Analisar'}
             </button>
           )}
 
@@ -287,15 +321,20 @@ export default function App() {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800 bg-gray-900/50">
-        {['conversa', 'capitulos'].map(tab => (
+        {[
+          { id: 'conversa', label: '💬 Conversa' },
+          { id: 'capitulos', label: '📑 Capítulos' },
+          { id: 'analise', label: '🧠 Análise', badge: analyses.length }
+        ].map(tab => (
           <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); if (tab === 'conversa') setSelectedChapter(null) }}
-            className={`px-4 py-2 text-sm font-medium transition ${
-              activeTab === tab ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'
+            key={tab.id}
+            onClick={() => { setActiveTab(tab.id); if (tab.id === 'conversa') setSelectedChapter(null) }}
+            className={`px-4 py-2 text-sm font-medium transition flex items-center gap-1 ${
+              activeTab === tab.id ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            {tab === 'conversa' ? '💬 Conversa' : '📑 Capítulos'}
+            {tab.label}
+            {tab.badge > 0 && <span className="text-xs bg-green-600 px-1.5 rounded-full">{tab.badge}</span>}
           </button>
         ))}
         {selectedChapter && (
@@ -308,7 +347,7 @@ export default function App() {
 
       {/* Main content */}
       <main ref={scrollRef} className="flex-1 overflow-y-auto">
-        {activeTab === 'conversa' ? (
+        {activeTab === 'conversa' && (
           <div className="max-w-4xl mx-auto p-4 space-y-3">
             {filteredConversation.length === 0 ? (
               <div className="text-center text-gray-600 py-20">
@@ -338,7 +377,9 @@ export default function App() {
               })
             )}
           </div>
-        ) : (
+        )}
+
+        {activeTab === 'capitulos' && (
           <div className="max-w-4xl mx-auto p-4">
             {chapters.length === 0 ? (
               <div className="text-center text-gray-600 py-20">
@@ -378,6 +419,79 @@ export default function App() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'analise' && (
+          <div className="max-w-4xl mx-auto p-4">
+            {analyses.length === 0 ? (
+              <div className="text-center text-gray-600 py-20">
+                <div className="text-4xl mb-3">🧠</div>
+                <div>Sem análise disponível</div>
+                {transcripts.length > 0 && session?.status !== 'running' && (
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={analyzing}
+                    className="mt-3 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 rounded text-sm"
+                  >
+                    {analyzing ? 'A analisar...' : 'Iniciar Análise'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {analyses.map((analysis, i) => (
+                  <div key={i} className="bg-gray-800/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-blue-400">{analysis.chapter_title}</h3>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        analysis.sentiment === 'positive' ? 'bg-green-900 text-green-300' :
+                        analysis.sentiment === 'negative' ? 'bg-red-900 text-red-300' :
+                        analysis.sentiment === 'mixed' ? 'bg-yellow-900 text-yellow-300' :
+                        'bg-gray-700 text-gray-300'
+                      }`}>
+                        {analysis.sentiment}
+                      </span>
+                    </div>
+
+                    <p className="text-gray-300 text-sm">{analysis.summary}</p>
+
+                    {analysis.key_topics?.length > 0 && (
+                      <div>
+                        <span className="text-xs text-gray-500">Tópicos:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {analysis.key_topics.map((topic, j) => (
+                            <span key={j} className="text-xs bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded">
+                              {topic}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {analysis.key_claims?.length > 0 && (
+                      <div>
+                        <span className="text-xs text-gray-500">Afirmações verificáveis:</span>
+                        <ul className="mt-1 space-y-1">
+                          {analysis.key_claims.map((claim, j) => (
+                            <li key={j} className="text-xs text-orange-300 flex items-start gap-2">
+                              <span className="text-orange-500">•</span>
+                              {claim}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {analysis.speakers_mentioned?.length > 0 && (
+                      <div className="text-xs text-gray-500">
+                        Pessoas mencionadas: {analysis.speakers_mentioned.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
