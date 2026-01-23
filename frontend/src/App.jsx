@@ -47,6 +47,28 @@ const SPEAKERS = {
 }
 const getSpeaker = (id) => SPEAKERS[id] || { color: 'bg-gray-600', text: 'text-white', name: id || 'Desconhecido', side: 'left' }
 
+// Componente de "a escrever..." com animação
+function TypingIndicator({ speaker }) {
+  return (
+    <div className={`flex ${speaker.side === 'right' ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[75%] flex flex-col ${speaker.side === 'right' ? 'items-end' : 'items-start'}`}>
+        <div className={`flex items-center gap-2 mb-1 ${speaker.side === 'right' ? 'flex-row-reverse' : ''}`}>
+          <span className={`text-xs font-bold ${speaker.color} ${speaker.text} px-2 py-0.5 rounded-full animate-pulse`}>
+            {speaker.name}
+          </span>
+        </div>
+        <div className={`px-4 py-3 rounded-2xl ${speaker.color} ${speaker.side === 'right' ? 'rounded-br-md' : 'rounded-bl-md'}`}>
+          <div className="flex gap-1">
+            <span className="w-2 h-2 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-2 h-2 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-2 h-2 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Parser de cronologia
 function parseCronologia(text) {
   return text.trim().split('\n').map((line, i) => {
@@ -110,10 +132,13 @@ export default function App() {
     if (msg.type === 'analysis_complete') { setAnalyses(msg.data.chapters); setAnalyzing(false); setActiveTab('analise') }
   }, [messages])
 
-  // Auto-scroll
+  // Auto-scroll suave
   useEffect(() => {
     if (scrollRef.current && session?.status === 'running') {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      })
     }
   }, [transcripts, session?.status])
 
@@ -361,42 +386,56 @@ export default function App() {
                 )}
               </div>
             ) : (
-              filteredConversation.map((group, i) => {
-                const speaker = getSpeaker(group.speaker)
-                const isRight = speaker.side === 'right'
+              <>
+                {filteredConversation.map((group, i) => {
+                  const speaker = getSpeaker(group.speaker)
+                  const isRight = speaker.side === 'right'
 
-                return (
-                  <div
-                    key={i}
-                    className={`flex ${isRight ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div className={`max-w-[75%] ${isRight ? 'items-end' : 'items-start'} flex flex-col`}>
-                      {/* Nome e tempo */}
-                      <div className={`flex items-center gap-2 mb-1 ${isRight ? 'flex-row-reverse' : ''}`}>
-                        <span className={`text-xs font-bold ${speaker.color} ${speaker.text} px-2 py-0.5 rounded-full`}>
-                          {speaker.name}
-                        </span>
-                        <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
-                      </div>
+                  return (
+                    <div
+                      key={i}
+                      className={`flex ${isRight ? 'justify-end' : 'justify-start'} animate-fadeIn`}
+                    >
+                      <div className={`max-w-[75%] ${isRight ? 'items-end' : 'items-start'} flex flex-col`}>
+                        {/* Nome e tempo */}
+                        <div className={`flex items-center gap-2 mb-1 ${isRight ? 'flex-row-reverse' : ''}`}>
+                          <span className={`text-xs font-bold ${speaker.color} ${speaker.text} px-2 py-0.5 rounded-full`}>
+                            {speaker.name}
+                          </span>
+                          <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
+                        </div>
 
-                      {/* Balão de mensagem */}
-                      <div
-                        className={`
-                          relative px-4 py-2 rounded-2xl
-                          ${isRight
-                            ? `${speaker.color} ${speaker.text} rounded-br-md`
-                            : `${speaker.color} ${speaker.text} rounded-bl-md`
-                          }
-                        `}
-                      >
-                        <p className="text-sm leading-relaxed">
-                          {group.texts.join(' ')}
-                        </p>
+                        {/* Balão de mensagem */}
+                        <div
+                          className={`
+                            relative px-4 py-2 rounded-2xl
+                            ${isRight
+                              ? `${speaker.color} ${speaker.text} rounded-br-md`
+                              : `${speaker.color} ${speaker.text} rounded-bl-md`
+                            }
+                          `}
+                        >
+                          <p className="text-sm leading-relaxed">
+                            {group.texts.join(' ')}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )
-              })
+                  )
+                })}
+
+                {/* Indicador "a escrever..." enquanto transcreve */}
+                {session?.status === 'running' && status?.stage === 'transcribing' && (
+                  <TypingIndicator speaker={
+                    // Alternar lado baseado no último speaker
+                    getSpeaker(
+                      filteredConversation.length > 0
+                        ? (filteredConversation[filteredConversation.length - 1].speaker === 'SPEAKER_00' ? 'SPEAKER_01' : 'SPEAKER_00')
+                        : 'SPEAKER_00'
+                    )
+                  } />
+                )}
+              </>
             )}
           </div>
         )}
