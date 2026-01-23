@@ -31,6 +31,14 @@ connected_clients: set[WebSocket] = set()
 async def lifespan(app: FastAPI):
     """Lifecycle manager."""
     global orchestrator
+
+    # Debug: mostrar configurações carregadas
+    logger.info(f"=== Settings loaded ===")
+    logger.info(f"  Whisper: model={settings.whisper_model}, device={settings.whisper_device}")
+    logger.info(f"  Diarization: enabled={settings.enable_diarization}, hf_token={'SET' if settings.hf_token else 'NOT SET'}")
+    logger.info(f"  Ollama: enabled={settings.ollama_enabled}, model={settings.ollama_model}")
+    logger.info(f"  Fact-check: enabled={settings.fact_check_enabled}")
+
     orchestrator = Orchestrator()
     logger.info("Orchestrator initialized")
     yield

@@ -1,12 +1,18 @@
 """Configurações do sistema."""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
 
 
 class Settings(BaseSettings):
     """Configurações globais da aplicação."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"  # Ignorar variáveis extra no .env
+    )
 
     # Paths
     base_dir: Path = Path(__file__).parent.parent
@@ -50,10 +56,6 @@ class Settings(BaseSettings):
     # Chapter Detection
     silence_threshold: float = -40.0  # dB
     min_chapter_duration: int = 60  # segundos mínimos entre capítulos
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 settings = Settings()

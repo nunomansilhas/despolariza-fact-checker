@@ -56,6 +56,9 @@ class TranscriberAgent(BaseAgent):
 
         logger.info(f"Using device: {device}, compute_type: {compute_type}")
 
+        # Debug: mostrar configuração de diarização
+        logger.info(f"Diarization config: enable={settings.enable_diarization}, hf_token={'SET' if settings.hf_token else 'NOT SET'}")
+
         # Tentar WhisperX primeiro se diarização está ativada
         if settings.enable_diarization and settings.hf_token:
             try:
@@ -80,10 +83,10 @@ class TranscriberAgent(BaseAgent):
                 logger.info("WhisperX loaded with diarization support")
                 return
 
-            except ImportError:
-                logger.warning("WhisperX not installed, falling back to faster-whisper")
+            except ImportError as e:
+                logger.warning(f"WhisperX not installed: {e}, falling back to faster-whisper")
             except Exception as e:
-                logger.warning(f"Failed to load WhisperX: {e}, falling back to faster-whisper")
+                logger.warning(f"Failed to load WhisperX: {e}", exc_info=True)
 
         # Fallback para faster-whisper
         try:
