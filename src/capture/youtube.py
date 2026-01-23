@@ -145,12 +145,18 @@ class YouTubeCapture:
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Invalid JSON from yt-dlp: {e}")
 
+    def _get_cache_dir(self) -> Path:
+        """Retorna o directório de cache de áudio."""
+        if settings.audio_cache_dir:
+            return Path(settings.audio_cache_dir)
+        return Path.home() / ".despolariza" / "audio_cache"
+
     def _get_cached_audio_path(self) -> Optional[Path]:
         """Verifica se existe áudio em cache para este vídeo."""
         if not settings.audio_cache_enabled or not self.video_info:
             return None
 
-        cache_dir = settings.audio_cache_dir
+        cache_dir = self._get_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         cached_file = cache_dir / f"{self.video_info.id}.wav"
@@ -220,7 +226,7 @@ class YouTubeCapture:
 
             # Guardar em cache se ativado
             if settings.audio_cache_enabled and self.video_info:
-                cache_dir = settings.audio_cache_dir
+                cache_dir = self._get_cache_dir()
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_path = cache_dir / f"{self.video_info.id}.wav"
                 try:

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Audio Cache - guardar áudio descarregado para não repetir downloads
     audio_cache_enabled: bool = True  # Ativar cache de áudio
-    audio_cache_dir: Path = Field(default_factory=lambda: Path.home() / ".despolariza" / "audio_cache")
+    audio_cache_dir: str = ""  # Pasta para cache de áudio (deixar vazio para usar ~/.despolariza/audio_cache)
 
     # Agents - Anthropic (opcional, fallback)
     anthropic_api_key: str = ""
