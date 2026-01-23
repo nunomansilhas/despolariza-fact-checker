@@ -8,7 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
+from pathlib import Path
 from pydantic import BaseModel
 import logging
 
@@ -90,6 +91,15 @@ class SessionResponse(BaseModel):
 
 
 # --- REST Endpoints ---
+
+@app.get("/poligrafo")
+async def poligrafo_page():
+    """Página do Polígrafo (HTML simples)."""
+    html_path = Path(__file__).parent.parent / "poligrafo.html"
+    if html_path.exists():
+        return FileResponse(html_path)
+    raise HTTPException(status_code=404, detail="poligrafo.html not found")
+
 
 @app.get("/")
 async def root():
@@ -598,6 +608,103 @@ async def run_poligrafo(request: Request):
 
     finally:
         await poligrafo.stop()
+
+
+@app.post("/api/poligrafo/separate")
+async def poligrafo_separate(request: Request):
+    """Separa transcrição por speaker."""
+    global orchestrator
+
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    data = await request.json()
+    speakers = data.get("speakers", [])
+
+    # Obter transcrição
+    session = orchestrator.get_session()
+    if not session:
+        autosave = orchestrator.load_autosave()
+        if not autosave:
+            raise HTTPException(status_code=404, detail="No session data")
+        transcripts = autosave.get("transcripts", [])
+        chapters = autosave.get("chapters", [])
+    else:
+        transcripts = [_serialize(t) for t in session.transcripts]
+        chapters = [_serialize(c) for c in session.chapters]
+
+    if not transcripts:
+        raise HTTPException(status_code=400, detail="No transcripts")
+
+    # Juntar texto
+    full_transcript = "\n\n".join([
+        f"[{t.get('start_time', 0):.0f}s] {t.get('text', '')}"
+        for t in transcripts
+    ])
+
+    # Usar agente
+    from .agents.poligrafo import PoligrafoAgent
+    agent = PoligrafoAgent()
+    await agent.start()
+
+    try:
+        segments = await agent.separate_speakers(full_transcript, chapters, speakers)
+        return {"segments": segments, "total": len(segments)}
+    finally:
+        await agent.stop()
+
+
+@app.post("/api/poligrafo/claims")
+async def poligrafo_claims(request: Request):
+    """Extrai claims de segmentos separados."""
+    data = await request.json()
+    segments = data.get("segments", [])
+
+    if not segments:
+        raise HTTPException(status_code=400, detail="No segments")
+
+    # Extrair nomes únicos dos speakers
+    speaker_names = list(set(s.get("speaker", "") for s in segments))
+
+    from .agents.poligrafo import PoligrafoAgent
+    agent = PoligrafoAgent()
+    await agent.start()
+
+    try:
+        claims = await agent.extract_claims(segments, speaker_names)
+        return {"claims": claims, "total": len(claims)}
+    finally:
+        await agent.stop()
+
+
+@app.post("/api/poligrafo/verify")
+async def poligrafo_verify(request: Request):
+    """Verifica lista de claims."""
+    data = await request.json()
+    claims = data.get("claims", [])
+
+    if not claims:
+        raise HTTPException(status_code=400, detail="No claims")
+
+    from .agents.poligrafo import PoligrafoAgent
+    agent = PoligrafoAgent()
+    await agent.start()
+
+    try:
+        verdicts = []
+        for i, claim in enumerate(claims):
+            # Broadcast progress via WebSocket
+            await broadcast_message({
+                "type": "verify_progress",
+                "data": {"current": i + 1, "total": len(claims)}
+            })
+
+            verdict = await agent.verify_claim(claim)
+            verdicts.append(verdict)
+
+        return {"verdicts": verdicts, "total": len(verdicts)}
+    finally:
+        await agent.stop()
 
 
 @app.get("/api/export")

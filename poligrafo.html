@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polígrafo - Despolariza</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #1a1a2e; color: #eee; }
+        .card { background: #16213e; border: 1px solid #0f3460; }
+        .form-control, .form-select { background: #0f3460; border-color: #1a1a2e; color: #eee; }
+        .form-control:focus, .form-select:focus { background: #0f3460; color: #eee; border-color: #e94560; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #c73e54; border-color: #c73e54; }
+        .transcript-box { max-height: 300px; overflow-y: auto; background: #0f3460; padding: 15px; border-radius: 8px; font-size: 14px; }
+        .result-box { max-height: 500px; overflow-y: auto; }
+        .speaker-0 { border-left: 4px solid #3498db; padding-left: 10px; margin: 10px 0; }
+        .speaker-1 { border-left: 4px solid #2ecc71; padding-left: 10px; margin: 10px 0; }
+        .speaker-ambos { border-left: 4px solid #f39c12; padding-left: 10px; margin: 10px 0; }
+        .speaker-name { font-weight: bold; font-size: 12px; text-transform: uppercase; }
+        .claim-card { border-left: 4px solid #666; margin: 10px 0; padding: 10px; background: #0f3460; border-radius: 4px; }
+        .claim-true { border-left-color: #2ecc71; }
+        .claim-false { border-left-color: #e74c3c; }
+        .claim-partial { border-left-color: #f39c12; }
+        .claim-unknown { border-left-color: #95a5a6; }
+        .loading { display: none; }
+        .loading.active { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <h1 class="mb-4">🔍 Polígrafo - Verificação de Factos</h1>
+
+        <!-- Step 1: Load Data -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">1. Carregar Transcrição</h5>
+            </div>
+            <div class="card-body">
+                <button id="btnLoad" class="btn btn-primary mb-3">📂 Carregar do Autosave</button>
+                <div id="transcriptInfo" class="text-muted mb-2"></div>
+                <div id="transcriptPreview" class="transcript-box" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Step 2: Configure Speakers -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">2. Configurar Speakers</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label text-primary">🎙️ Entrevistador</label>
+                        <input type="text" id="speaker0Name" class="form-control mb-2" value="Tomás" placeholder="Nome">
+                        <textarea id="speaker0Context" class="form-control" rows="3" placeholder="Contexto: quem é, como fala...">Host do podcast Despolariza-te. Faz perguntas diretas e provocadoras. Estilo informal.</textarea>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label text-success">🎤 Convidado</label>
+                        <input type="text" id="speaker1Name" class="form-control mb-2" value="Daniel Oliveira" placeholder="Nome">
+                        <textarea id="speaker1Context" class="form-control" rows="3" placeholder="Contexto: quem é, profissão, posições...">Jornalista e comentador político. Posição de esquerda. Respostas longas e elaboradas.</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Process -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">3. Processar</h5>
+            </div>
+            <div class="card-body">
+                <button id="btnSeparate" class="btn btn-primary me-2" disabled>🔄 Separar por Speaker</button>
+                <button id="btnExtractClaims" class="btn btn-outline-primary me-2" disabled>📋 Extrair Claims</button>
+                <button id="btnVerify" class="btn btn-outline-primary" disabled>✅ Verificar Claims</button>
+
+                <div id="loading" class="loading mt-3">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span id="loadingText" class="ms-2">A processar...</span>
+                </div>
+
+                <div id="progressInfo" class="mt-3 text-muted"></div>
+            </div>
+        </div>
+
+        <!-- Step 4: Results -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">4. Resultados</h5>
+                <div>
+                    <button id="btnSaveJson" class="btn btn-sm btn-outline-light me-2" disabled>💾 Guardar JSON</button>
+                    <button id="btnCopyMd" class="btn btn-sm btn-outline-light" disabled>📋 Copiar Markdown</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabConversation">Conversa</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabClaims">Claims</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabJson">JSON</button>
+                    </li>
+                </ul>
+                <div class="tab-content result-box">
+                    <div class="tab-pane fade show active" id="tabConversation"></div>
+                    <div class="tab-pane fade" id="tabClaims"></div>
+                    <div class="tab-pane fade" id="tabJson">
+                        <pre id="jsonOutput" style="color: #eee; font-size: 12px;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // State
+        let transcriptData = null;
+        let separatedData = null;
+        let claimsData = null;
+        let verdictsData = null;
+
+        // Elements
+        const btnLoad = document.getElementById('btnLoad');
+        const btnSeparate = document.getElementById('btnSeparate');
+        const btnExtractClaims = document.getElementById('btnExtractClaims');
+        const btnVerify = document.getElementById('btnVerify');
+        const btnSaveJson = document.getElementById('btnSaveJson');
+        const btnCopyMd = document.getElementById('btnCopyMd');
+        const loading = document.getElementById('loading');
+        const loadingText = document.getElementById('loadingText');
+        const progressInfo = document.getElementById('progressInfo');
+
+        // Load transcript from autosave
+        btnLoad.addEventListener('click', async () => {
+            try {
+                showLoading('A carregar autosave...');
+                const res = await fetch('/api/session/data');
+                if (!res.ok) throw new Error('Sem dados de sessão');
+
+                transcriptData = await res.json();
+
+                // Show info
+                const totalChars = transcriptData.transcripts.reduce((a, t) => a + t.text.length, 0);
+                document.getElementById('transcriptInfo').innerHTML = `
+                    <strong>${transcriptData.video_title || 'Sem título'}</strong><br>
+                    ${transcriptData.transcripts.length} segmentos •
+                    ${transcriptData.chapters?.length || 0} capítulos •
+                    ${totalChars.toLocaleString()} caracteres
+                `;
+
+                // Show preview
+                const preview = transcriptData.transcripts.slice(0, 5).map(t => t.text).join(' ').slice(0, 500) + '...';
+                document.getElementById('transcriptPreview').innerText = preview;
+                document.getElementById('transcriptPreview').style.display = 'block';
+
+                btnSeparate.disabled = false;
+                hideLoading();
+
+            } catch (e) {
+                hideLoading();
+                alert('Erro: ' + e.message);
+            }
+        });
+
+        // Separate by speaker
+        btnSeparate.addEventListener('click', async () => {
+            if (!transcriptData) return;
+
+            const speakers = [
+                { name: document.getElementById('speaker0Name').value, context: document.getElementById('speaker0Context').value },
+                { name: document.getElementById('speaker1Name').value, context: document.getElementById('speaker1Context').value }
+            ];
+
+            try {
+                showLoading('A separar por speaker (pode demorar alguns minutos)...');
+
+                const res = await fetch('/api/poligrafo/separate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ speakers })
+                });
+
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erro');
+
+                separatedData = await res.json();
+
+                // Render conversation
+                renderConversation(separatedData.segments, speakers);
+
+                // Update JSON
+                document.getElementById('jsonOutput').innerText = JSON.stringify(separatedData, null, 2);
+
+                btnExtractClaims.disabled = false;
+                btnSaveJson.disabled = false;
+                btnCopyMd.disabled = false;
+                hideLoading();
+                progressInfo.innerText = `✅ ${separatedData.segments.length} segmentos separados`;
+
+            } catch (e) {
+                hideLoading();
+                alert('Erro: ' + e.message);
+            }
+        });
+
+        // Extract claims
+        btnExtractClaims.addEventListener('click', async () => {
+            if (!separatedData) return;
+
+            try {
+                showLoading('A extrair claims factuais...');
+
+                const res = await fetch('/api/poligrafo/claims', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ segments: separatedData.segments })
+                });
+
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erro');
+
+                claimsData = await res.json();
+
+                // Render claims
+                renderClaims(claimsData.claims);
+
+                // Update JSON
+                separatedData.claims = claimsData.claims;
+                document.getElementById('jsonOutput').innerText = JSON.stringify(separatedData, null, 2);
+
+                btnVerify.disabled = false;
+                hideLoading();
+                progressInfo.innerText = `✅ ${claimsData.claims.length} claims extraídos`;
+
+            } catch (e) {
+                hideLoading();
+                alert('Erro: ' + e.message);
+            }
+        });
+
+        // Verify claims
+        btnVerify.addEventListener('click', async () => {
+            if (!claimsData) return;
+
+            try {
+                showLoading('A verificar claims (0/' + claimsData.claims.length + ')...');
+
+                const res = await fetch('/api/poligrafo/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ claims: claimsData.claims })
+                });
+
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erro');
+
+                verdictsData = await res.json();
+
+                // Render verified claims
+                renderVerifiedClaims(verdictsData.verdicts);
+
+                // Update JSON
+                separatedData.verdicts = verdictsData.verdicts;
+                document.getElementById('jsonOutput').innerText = JSON.stringify(separatedData, null, 2);
+
+                hideLoading();
+
+                // Summary
+                const counts = {};
+                verdictsData.verdicts.forEach(v => counts[v.verdict] = (counts[v.verdict] || 0) + 1);
+                progressInfo.innerHTML = `
+                    ✅ Verificação completa:<br>
+                    ${counts.VERDADEIRO || 0} verdadeiros •
+                    ${counts.FALSO || 0} falsos •
+                    ${counts.PARCIALMENTE_VERDADEIRO || 0} parciais •
+                    ${counts.NAO_VERIFICAVEL || 0} não verificáveis
+                `;
+
+            } catch (e) {
+                hideLoading();
+                alert('Erro: ' + e.message);
+            }
+        });
+
+        // Save JSON
+        btnSaveJson.addEventListener('click', () => {
+            if (!separatedData) return;
+
+            const blob = new Blob([JSON.stringify(separatedData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'poligrafo_result.json';
+            a.click();
+        });
+
+        // Copy Markdown
+        btnCopyMd.addEventListener('click', () => {
+            if (!separatedData) return;
+
+            let md = '# Polígrafo - Análise\n\n';
+
+            if (separatedData.segments) {
+                md += '## Conversa\n\n';
+                separatedData.segments.forEach(s => {
+                    md += `**${s.speaker}:** ${s.text}\n\n`;
+                });
+            }
+
+            if (separatedData.verdicts) {
+                md += '## Verificação de Claims\n\n';
+                separatedData.verdicts.forEach(v => {
+                    const emoji = { VERDADEIRO: '✅', FALSO: '❌', PARCIALMENTE_VERDADEIRO: '⚠️', NAO_VERIFICAVEL: '❓' }[v.verdict] || '?';
+                    md += `### ${emoji} ${v.claim}\n\n`;
+                    md += `- **Speaker:** ${v.speaker}\n`;
+                    md += `- **Veredicto:** ${v.verdict}\n`;
+                    md += `- **Explicação:** ${v.explanation}\n`;
+                    if (v.correction) md += `- **Correção:** ${v.correction}\n`;
+                    md += '\n';
+                });
+            }
+
+            navigator.clipboard.writeText(md);
+            alert('Markdown copiado!');
+        });
+
+        // Render functions
+        function renderConversation(segments, speakers) {
+            const container = document.getElementById('tabConversation');
+            container.innerHTML = '';
+
+            segments.forEach(s => {
+                const div = document.createElement('div');
+                const speakerClass = s.speaker === speakers[0].name ? 'speaker-0' :
+                                     s.speaker === speakers[1].name ? 'speaker-1' : 'speaker-ambos';
+                div.className = speakerClass;
+                div.innerHTML = `
+                    <div class="speaker-name">${s.speaker}</div>
+                    <div>${s.text}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderClaims(claims) {
+            const container = document.getElementById('tabClaims');
+            container.innerHTML = '<h6>Claims Extraídos (ainda não verificados)</h6>';
+
+            claims.forEach((c, i) => {
+                const div = document.createElement('div');
+                div.className = 'claim-card';
+                div.innerHTML = `
+                    <div><strong>${i + 1}.</strong> ${c.claim}</div>
+                    <div class="text-muted small">👤 ${c.speaker}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderVerifiedClaims(verdicts) {
+            const container = document.getElementById('tabClaims');
+            container.innerHTML = '<h6>Claims Verificados</h6>';
+
+            verdicts.forEach((v, i) => {
+                const div = document.createElement('div');
+                const verdictClass = { VERDADEIRO: 'claim-true', FALSO: 'claim-false',
+                                       PARCIALMENTE_VERDADEIRO: 'claim-partial', NAO_VERIFICAVEL: 'claim-unknown' }[v.verdict] || '';
+                const emoji = { VERDADEIRO: '✅', FALSO: '❌', PARCIALMENTE_VERDADEIRO: '⚠️', NAO_VERIFICAVEL: '❓' }[v.verdict] || '?';
+
+                div.className = `claim-card ${verdictClass}`;
+                div.innerHTML = `
+                    <div><strong>${emoji} ${v.claim}</strong></div>
+                    <div class="text-muted small">👤 ${v.speaker}</div>
+                    <div class="mt-2">${v.explanation}</div>
+                    ${v.correction ? `<div class="text-warning mt-1">✏️ ${v.correction}</div>` : ''}
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function showLoading(text) {
+            loading.classList.add('active');
+            loadingText.innerText = text;
+        }
+
+        function hideLoading() {
+            loading.classList.remove('active');
+        }
+    </script>
+</body>
+</html>
