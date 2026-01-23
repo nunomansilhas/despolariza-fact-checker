@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     yt_cookies_browser: str = ""  # Ex: "chrome", "firefox", "edge"
     yt_cookies_file: str = ""  # Alternativa: path para ficheiro cookies.txt
 
+    # Audio Cache - guardar áudio descarregado para não repetir downloads
+    audio_cache_enabled: bool = True  # Ativar cache de áudio
+    audio_cache_dir: Path = Field(default_factory=lambda: Path.home() / ".despolariza" / "audio_cache")
+
     # Agents - Anthropic (opcional, fallback)
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"

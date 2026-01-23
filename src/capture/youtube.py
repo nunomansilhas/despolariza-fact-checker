@@ -145,6 +145,21 @@ class YouTubeCapture:
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Invalid JSON from yt-dlp: {e}")
 
+    def _get_cached_audio_path(self) -> Optional[Path]:
+        """Verifica se existe áudio em cache para este vídeo."""
+        if not settings.audio_cache_enabled or not self.video_info:
+            return None
+
+        cache_dir = settings.audio_cache_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        cached_file = cache_dir / f"{self.video_info.id}.wav"
+        if cached_file.exists():
+            logger.info(f"Found cached audio: {cached_file}")
+            return cached_file
+
+        return None
+
     async def download_audio(self, output_path: Optional[Path] = None) -> Path:
         """
         Faz download do áudio completo do vídeo.
@@ -155,6 +170,16 @@ class YouTubeCapture:
         Returns:
             Path para o ficheiro de áudio (WAV, 16kHz mono)
         """
+        # Verificar cache primeiro
+        cached = self._get_cached_audio_path()
+        if cached:
+            # Copiar do cache para temp dir para processamento
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="despolariza_"))
+            temp_audio = self._temp_dir / "audio.wav"
+            shutil.copy2(cached, temp_audio)
+            logger.info(f"Using cached audio (copied to {temp_audio})")
+            return temp_audio
+
         if output_path is None:
             self._temp_dir = Path(tempfile.mkdtemp(prefix="despolariza_"))
             output_path = self._temp_dir / "audio.wav"
@@ -192,6 +217,18 @@ class YouTubeCapture:
                     raise RuntimeError("Audio file not created")
 
             logger.info(f"Audio downloaded: {actual_path}")
+
+            # Guardar em cache se ativado
+            if settings.audio_cache_enabled and self.video_info:
+                cache_dir = settings.audio_cache_dir
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / f"{self.video_info.id}.wav"
+                try:
+                    shutil.copy2(actual_path, cache_path)
+                    logger.info(f"Audio cached: {cache_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to cache audio: {e}")
+
             return actual_path
 
         except subprocess.TimeoutExpired:
