@@ -87,12 +87,16 @@ class TranscriberAgent(BaseAgent):
                         language=settings.whisper_language
                     )
 
-                    # Carregar modelo de diarização
+                    # Carregar modelo de diarização via pyannote
                     logger.info("Loading diarization model...")
-                    self._diarize_model = whisperx.DiarizationPipeline(
-                        use_auth_token=settings.hf_token,
-                        device=device
+                    from pyannote.audio import Pipeline
+                    self._diarize_model = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1",
+                        use_auth_token=settings.hf_token
                     )
+                    if device != "cpu":
+                        import torch
+                        self._diarize_model.to(torch.device(device))
 
                     self._use_whisperx = True
                     logger.info("WhisperX loaded with diarization support")
@@ -220,8 +224,9 @@ class TranscriberAgent(BaseAgent):
 
         # Diarização
         if self._diarize_model:
+            # pyannote Pipeline espera ficheiro de áudio, não array
             diarize_segments = self._diarize_model(
-                audio,
+                audio_path,
                 min_speakers=settings.min_speakers,
                 max_speakers=settings.max_speakers
             )
