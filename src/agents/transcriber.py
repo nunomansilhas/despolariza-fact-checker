@@ -66,8 +66,23 @@ class TranscriberAgent(BaseAgent):
                 import torch
                 try:
                     from omegaconf import DictConfig, ListConfig, OmegaConf
-                    torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
-                    logger.info("Added omegaconf to torch safe globals")
+                    from omegaconf.base import ContainerMetadata, Metadata, Node
+                    from omegaconf.nodes import ValueNode, AnyNode
+                    safe_globals = [
+                        DictConfig, ListConfig, OmegaConf,
+                        ContainerMetadata, Metadata, Node,
+                        ValueNode, AnyNode
+                    ]
+                    torch.serialization.add_safe_globals(safe_globals)
+                    logger.info(f"Added {len(safe_globals)} omegaconf classes to torch safe globals")
+                except ImportError as ie:
+                    logger.warning(f"Could not import all omegaconf classes: {ie}")
+                    # Fallback: tentar apenas as classes básicas
+                    try:
+                        from omegaconf import DictConfig, ListConfig, OmegaConf
+                        torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.warning(f"Could not add omegaconf to safe globals: {e}")
 
