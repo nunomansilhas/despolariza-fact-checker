@@ -186,6 +186,7 @@ class YouTubeCapture:
     async def stream_chunks(
         self,
         chunk_duration: int = None,
+        chapters: list[dict] = None,
         on_chunk: Optional[Callable[[AudioChunk], None]] = None
     ) -> AsyncGenerator[AudioChunk, None]:
         """
@@ -195,7 +196,8 @@ class YouTubeCapture:
         Para livestreams, faria captura em tempo real (não implementado).
 
         Args:
-            chunk_duration: Duração de cada chunk em segundos
+            chunk_duration: Duração de cada chunk em segundos (ignorado se chapters fornecido)
+            chapters: Lista de capítulos com start_time e end_time para chunk por capítulo
             on_chunk: Callback opcional para cada chunk
 
         Yields:
@@ -213,58 +215,122 @@ class YouTubeCapture:
         # Dividir em chunks usando ffmpeg
         self._running = True
         chunk_id = 0
-        current_time = 0.0
         total_duration = self.video_info.duration
 
-        while current_time < total_duration and self._running:
-            # Calcular duração deste chunk
-            remaining = total_duration - current_time
-            this_duration = min(chunk_duration, remaining)
+        # Se temos capítulos, criar um chunk por capítulo
+        if chapters and len(chapters) > 0:
+            logger.info(f"Using chapter-based chunking ({len(chapters)} chapters)")
 
-            # Extrair chunk com ffmpeg
-            chunk_path = audio_path.parent / f"chunk_{chunk_id:04d}.wav"
+            for i, chapter in enumerate(chapters):
+                if not self._running:
+                    break
 
-            cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite
-                "-ss", str(current_time),  # Start time
-                "-t", str(this_duration),  # Duration
-                "-i", str(audio_path),
-                "-ar", str(settings.audio_sample_rate),
-                "-ac", "1",  # Mono
-                str(chunk_path)
-            ]
+                start_time = chapter.get("start_time", 0)
+                end_time = chapter.get("end_time")
 
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(cmd, capture_output=True, timeout=60)
-            )
+                # Calcular end_time se não fornecido
+                if end_time is None:
+                    if i < len(chapters) - 1:
+                        end_time = chapters[i + 1].get("start_time", total_duration)
+                    else:
+                        end_time = total_duration
 
-            if result.returncode != 0:
-                logger.error(f"FFmpeg error: {result.stderr.decode()}")
-                break
+                this_duration = end_time - start_time
 
-            chunk = AudioChunk(
-                chunk_id=chunk_id,
-                path=chunk_path,
-                start_time=current_time,
-                duration=this_duration,
-            )
+                # Extrair chunk com ffmpeg
+                chunk_path = audio_path.parent / f"chunk_{chunk_id:04d}.wav"
 
-            logger.info(f"Created chunk {chunk_id}: {current_time:.1f}s - {current_time + this_duration:.1f}s")
+                cmd = [
+                    "ffmpeg",
+                    "-y",  # Overwrite
+                    "-ss", str(start_time),  # Start time
+                    "-t", str(this_duration),  # Duration
+                    "-i", str(audio_path),
+                    "-ar", str(settings.audio_sample_rate),
+                    "-ac", "1",  # Mono
+                    str(chunk_path)
+                ]
 
-            if on_chunk:
-                on_chunk(chunk)
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda cmd=cmd: subprocess.run(cmd, capture_output=True, timeout=120)
+                )
 
-            yield chunk
+                if result.returncode != 0:
+                    logger.error(f"FFmpeg error: {result.stderr.decode()}")
+                    continue
 
-            # Avançar
-            chunk_id += 1
-            current_time += chunk_duration
+                chunk = AudioChunk(
+                    chunk_id=chunk_id,
+                    path=chunk_path,
+                    start_time=start_time,
+                    duration=this_duration,
+                )
 
-            # Pequena pausa para não sobrecarregar
-            await asyncio.sleep(0.1)
+                chapter_title = chapter.get("title", f"Chapter {i+1}")
+                logger.info(f"Created chunk {chunk_id} for '{chapter_title}': {start_time:.1f}s - {end_time:.1f}s ({this_duration:.1f}s)")
+
+                if on_chunk:
+                    on_chunk(chunk)
+
+                yield chunk
+
+                chunk_id += 1
+                await asyncio.sleep(0.1)
+        else:
+            # Fallback: fixed duration chunks
+            current_time = 0.0
+
+            while current_time < total_duration and self._running:
+                # Calcular duração deste chunk
+                remaining = total_duration - current_time
+                this_duration = min(chunk_duration, remaining)
+
+                # Extrair chunk com ffmpeg
+                chunk_path = audio_path.parent / f"chunk_{chunk_id:04d}.wav"
+
+                cmd = [
+                    "ffmpeg",
+                    "-y",  # Overwrite
+                    "-ss", str(current_time),  # Start time
+                    "-t", str(this_duration),  # Duration
+                    "-i", str(audio_path),
+                    "-ar", str(settings.audio_sample_rate),
+                    "-ac", "1",  # Mono
+                    str(chunk_path)
+                ]
+
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda cmd=cmd: subprocess.run(cmd, capture_output=True, timeout=60)
+                )
+
+                if result.returncode != 0:
+                    logger.error(f"FFmpeg error: {result.stderr.decode()}")
+                    break
+
+                chunk = AudioChunk(
+                    chunk_id=chunk_id,
+                    path=chunk_path,
+                    start_time=current_time,
+                    duration=this_duration,
+                )
+
+                logger.info(f"Created chunk {chunk_id}: {current_time:.1f}s - {current_time + this_duration:.1f}s")
+
+                if on_chunk:
+                    on_chunk(chunk)
+
+                yield chunk
+
+                # Avançar
+                chunk_id += 1
+                current_time += chunk_duration
+
+                # Pequena pausa para não sobrecarregar
+                await asyncio.sleep(0.1)
 
     def stop(self):
         """Para o streaming."""

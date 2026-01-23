@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     # Speaker Diarization (WhisperX)
     enable_diarization: bool = True  # Identificar diferentes speakers
     hf_token: str = ""  # HuggingFace token para pyannote (diarização)
-    min_speakers: int = 1  # Número mínimo de speakers esperados
-    max_speakers: int = 4  # Número máximo de speakers esperados
+    min_speakers: int = 2  # Número mínimo de speakers esperados (podcast = 2)
+    max_speakers: int = 2  # Número máximo de speakers esperados (podcast = 2)
 
     # Audio Capture
     audio_chunk_duration: int = 30  # segundos por chunk

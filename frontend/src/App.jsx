@@ -38,14 +38,13 @@ const formatTime = (s) => {
   return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}` : `${m}:${sec.toString().padStart(2,'0')}`
 }
 
-// Cores dos speakers - estilo chat
-const SPEAKERS = {
-  'SPEAKER_00': { color: 'bg-blue-600', text: 'text-white', name: 'Locutor A', side: 'left' },
-  'SPEAKER_01': { color: 'bg-green-600', text: 'text-white', name: 'Locutor B', side: 'right' },
+// Cores dos speakers - estilo chat (nomes configuráveis)
+const DEFAULT_SPEAKERS = {
+  'SPEAKER_00': { color: 'bg-blue-600', text: 'text-white', name: 'Entrevistador', side: 'left' },
+  'SPEAKER_01': { color: 'bg-green-600', text: 'text-white', name: 'Convidado', side: 'right' },
   'SPEAKER_02': { color: 'bg-purple-600', text: 'text-white', name: 'Locutor C', side: 'left' },
   'SPEAKER_03': { color: 'bg-orange-600', text: 'text-white', name: 'Locutor D', side: 'right' },
 }
-const getSpeaker = (id) => SPEAKERS[id] || { color: 'bg-gray-600', text: 'text-white', name: id || 'Desconhecido', side: 'left' }
 
 // Componente de "a escrever..." com animação
 function TypingIndicator({ speaker }) {
@@ -99,12 +98,31 @@ export default function App() {
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
   const [claimResults, setClaimResults] = useState({}) // { "claim_text": { status, verdict, explanation } }
   const [verifyingClaim, setVerifyingClaim] = useState(null) // claim being verified
+  const [speakerNames, setSpeakerNames] = useState(() => {
+    // Carregar nomes guardados do localStorage
+    const saved = localStorage.getItem('speakerNames')
+    return saved ? JSON.parse(saved) : { speaker0: 'Entrevistador', speaker1: 'Convidado' }
+  })
+  const [showSpeakerConfig, setShowSpeakerConfig] = useState(false)
 
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
 
-  // Carregar sessão existente
+  // Função para obter info do speaker com nomes customizados
+  const getSpeaker = useCallback((id) => {
+    const base = DEFAULT_SPEAKERS[id] || { color: 'bg-gray-600', text: 'text-white', name: id || 'Desconhecido', side: 'left' }
+    if (id === 'SPEAKER_00') return { ...base, name: speakerNames.speaker0 || base.name }
+    if (id === 'SPEAKER_01') return { ...base, name: speakerNames.speaker1 || base.name }
+    return base
+  }, [speakerNames])
+
+  // Guardar nomes no localStorage
   useEffect(() => {
+    localStorage.setItem('speakerNames', JSON.stringify(speakerNames))
+  }, [speakerNames])
+
+  // Carregar sessão existente e polling para updates
+  const fetchSessionData = useCallback(() => {
     fetch('/api/session/data').then(r => r.ok ? r.json() : null).then(data => {
       if (data) {
         setSession({ video_title: data.video_title, status: data.status })
@@ -114,6 +132,18 @@ export default function App() {
       }
     }).catch(() => {})
   }, [])
+
+  // Carregar dados iniciais
+  useEffect(() => {
+    fetchSessionData()
+  }, [fetchSessionData])
+
+  // Polling como fallback quando sessão está a correr (a cada 2s)
+  useEffect(() => {
+    if (session?.status !== 'running') return
+    const interval = setInterval(fetchSessionData, 2000)
+    return () => clearInterval(interval)
+  }, [session?.status, fetchSessionData])
 
   // Processar mensagens WebSocket
   useEffect(() => {
@@ -293,6 +323,14 @@ export default function App() {
             📑
           </button>
 
+          <button
+            onClick={() => setShowSpeakerConfig(!showSpeakerConfig)}
+            className={`px-3 py-1.5 rounded text-sm ${showSpeakerConfig ? 'bg-green-600' : 'bg-gray-800 hover:bg-gray-700'}`}
+            title="Configurar speakers"
+          >
+            👥
+          </button>
+
           {session?.status === 'running' ? (
             <button onClick={handleStop} className="px-4 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium">
               Parar
@@ -338,6 +376,38 @@ export default function App() {
             />
             <div className="text-xs text-gray-500 mt-1">
               {parseCronologia(cronologiaText).length} capítulos detectados
+            </div>
+          </div>
+        )}
+
+        {/* Speaker config */}
+        {showSpeakerConfig && (
+          <div className="mt-3 p-3 bg-gray-800 rounded">
+            <div className="text-sm font-medium mb-2 text-gray-300">👥 Nomes dos Speakers</div>
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="text-xs text-gray-500 block mb-1">Speaker 1 (esquerda)</label>
+                <input
+                  type="text"
+                  value={speakerNames.speaker0}
+                  onChange={e => setSpeakerNames(prev => ({ ...prev, speaker0: e.target.value }))}
+                  placeholder="Ex: Daniel Oliveira"
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-blue-600/50 focus:border-blue-500 focus:outline-none text-sm"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-500 block mb-1">Speaker 2 (direita)</label>
+                <input
+                  type="text"
+                  value={speakerNames.speaker1}
+                  onChange={e => setSpeakerNames(prev => ({ ...prev, speaker1: e.target.value }))}
+                  placeholder="Ex: Nome do Convidado"
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-green-600/50 focus:border-green-500 focus:outline-none text-sm"
+                />
+              </div>
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              💡 Os nomes são guardados localmente para futuras sessões
             </div>
           </div>
         )}

@@ -310,7 +310,16 @@ class Orchestrator:
         try:
             await self._notify("status", {"stage": "downloading", "message": "A descarregar áudio..."})
 
-            async for chunk in self._capture.stream_chunks():
+            # Passar capítulos para chunking por capítulo (se existirem)
+            chapters_data = None
+            if self._session.chapters:
+                chapters_data = [
+                    {"start_time": ch.start_time, "end_time": ch.end_time, "title": ch.title}
+                    for ch in self._session.chapters
+                ]
+                logger.info(f"Using chapter-based chunking with {len(chapters_data)} chapters")
+
+            async for chunk in self._capture.stream_chunks(chapters=chapters_data):
                 if self._session.status != "running":
                     break
 
@@ -361,12 +370,15 @@ class Orchestrator:
                 self._session.current_time = chunk.start_time + chunk.duration
                 self._session.chunks_processed += 1
 
+                # Calcular total de chunks (por capítulo ou por duração fixa)
+                total_chunks = len(self._session.chapters) if self._session.chapters else int(self._session.video_info.duration / settings.audio_chunk_duration) + 1
+
                 await self._notify("progress", {
                     "current_time": self._session.current_time,
                     "total_duration": self._session.video_info.duration,
                     "percentage": (self._session.current_time / self._session.video_info.duration) * 100,
                     "chunks_processed": self._session.chunks_processed,
-                    "total_chunks": int(self._session.video_info.duration / settings.audio_chunk_duration) + 1,
+                    "total_chunks": total_chunks,
                     "current_chapter": current_chapter.title if current_chapter else None
                 })
 
