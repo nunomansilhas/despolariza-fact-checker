@@ -63,49 +63,45 @@ class TranscriberAgent(BaseAgent):
         if settings.enable_diarization and settings.hf_token:
             try:
                 # Workaround para PyTorch 2.6+ (weights_only=True por defeito)
+                # Os modelos pyannote/whisperx são de fontes confiáveis (HuggingFace)
+                # então usamos weights_only=False temporariamente
                 import torch
+                _original_torch_load = torch.load
+
+                def _patched_torch_load(*args, **kwargs):
+                    # Forçar weights_only=False para carregar modelos legacy
+                    kwargs['weights_only'] = False
+                    return _original_torch_load(*args, **kwargs)
+
+                torch.load = _patched_torch_load
+                logger.info("Patched torch.load with weights_only=False for WhisperX/pyannote models")
+
                 try:
-                    from omegaconf import DictConfig, ListConfig, OmegaConf
-                    from omegaconf.base import ContainerMetadata, Metadata, Node
-                    from omegaconf.nodes import ValueNode, AnyNode
-                    safe_globals = [
-                        DictConfig, ListConfig, OmegaConf,
-                        ContainerMetadata, Metadata, Node,
-                        ValueNode, AnyNode
-                    ]
-                    torch.serialization.add_safe_globals(safe_globals)
-                    logger.info(f"Added {len(safe_globals)} omegaconf classes to torch safe globals")
-                except ImportError as ie:
-                    logger.warning(f"Could not import all omegaconf classes: {ie}")
-                    # Fallback: tentar apenas as classes básicas
-                    try:
-                        from omegaconf import DictConfig, ListConfig, OmegaConf
-                        torch.serialization.add_safe_globals([DictConfig, ListConfig, OmegaConf])
-                    except Exception:
-                        pass
-                except Exception as e:
-                    logger.warning(f"Could not add omegaconf to safe globals: {e}")
+                    import whisperx
+                    logger.info("Loading WhisperX with diarization support...")
 
-                import whisperx
-                logger.info("Loading WhisperX with diarization support...")
+                    self._model = whisperx.load_model(
+                        settings.whisper_model,
+                        device=device,
+                        compute_type=compute_type,
+                        language=settings.whisper_language
+                    )
 
-                self._model = whisperx.load_model(
-                    settings.whisper_model,
-                    device=device,
-                    compute_type=compute_type,
-                    language=settings.whisper_language
-                )
+                    # Carregar modelo de diarização
+                    logger.info("Loading diarization model...")
+                    self._diarize_model = whisperx.DiarizationPipeline(
+                        use_auth_token=settings.hf_token,
+                        device=device
+                    )
 
-                # Carregar modelo de diarização
-                logger.info("Loading diarization model...")
-                self._diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=settings.hf_token,
-                    device=device
-                )
+                    self._use_whisperx = True
+                    logger.info("WhisperX loaded with diarization support")
+                    return
 
-                self._use_whisperx = True
-                logger.info("WhisperX loaded with diarization support")
-                return
+                finally:
+                    # Restaurar torch.load original
+                    torch.load = _original_torch_load
+                    logger.info("Restored original torch.load")
 
             except ImportError as e:
                 logger.warning(f"WhisperX not installed: {e}, falling back to faster-whisper")
