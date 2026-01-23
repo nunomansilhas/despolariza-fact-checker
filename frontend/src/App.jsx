@@ -38,14 +38,14 @@ const formatTime = (s) => {
   return h > 0 ? `${h}:${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}` : `${m}:${sec.toString().padStart(2,'0')}`
 }
 
-// Cores dos speakers
+// Cores dos speakers - estilo chat
 const SPEAKERS = {
-  'SPEAKER_00': { color: 'border-blue-500', bg: 'bg-blue-500/10', name: 'Locutor A' },
-  'SPEAKER_01': { color: 'border-green-500', bg: 'bg-green-500/10', name: 'Locutor B' },
-  'SPEAKER_02': { color: 'border-purple-500', bg: 'bg-purple-500/10', name: 'Locutor C' },
-  'SPEAKER_03': { color: 'border-orange-500', bg: 'bg-orange-500/10', name: 'Locutor D' },
+  'SPEAKER_00': { color: 'bg-blue-600', text: 'text-white', name: 'Locutor A', side: 'left' },
+  'SPEAKER_01': { color: 'bg-green-600', text: 'text-white', name: 'Locutor B', side: 'right' },
+  'SPEAKER_02': { color: 'bg-purple-600', text: 'text-white', name: 'Locutor C', side: 'left' },
+  'SPEAKER_03': { color: 'bg-orange-600', text: 'text-white', name: 'Locutor D', side: 'right' },
 }
-const getSpeaker = (id) => SPEAKERS[id] || { color: 'border-gray-500', bg: 'bg-gray-500/10', name: id || 'Desconhecido' }
+const getSpeaker = (id) => SPEAKERS[id] || { color: 'bg-gray-600', text: 'text-white', name: id || 'Desconhecido', side: 'left' }
 
 // Parser de cronologia
 function parseCronologia(text) {
@@ -348,7 +348,7 @@ export default function App() {
       {/* Main content */}
       <main ref={scrollRef} className="flex-1 overflow-y-auto">
         {activeTab === 'conversa' && (
-          <div className="max-w-4xl mx-auto p-4 space-y-3">
+          <div className="max-w-4xl mx-auto p-4 space-y-4">
             {filteredConversation.length === 0 ? (
               <div className="text-center text-gray-600 py-20">
                 {transcripts.length === 0 ? (
@@ -363,15 +363,37 @@ export default function App() {
             ) : (
               filteredConversation.map((group, i) => {
                 const speaker = getSpeaker(group.speaker)
+                const isRight = speaker.side === 'right'
+
                 return (
-                  <div key={i} className={`border-l-2 ${speaker.color} ${speaker.bg} rounded-r-lg p-3`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm">{speaker.name}</span>
-                      <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
+                  <div
+                    key={i}
+                    className={`flex ${isRight ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`max-w-[75%] ${isRight ? 'items-end' : 'items-start'} flex flex-col`}>
+                      {/* Nome e tempo */}
+                      <div className={`flex items-center gap-2 mb-1 ${isRight ? 'flex-row-reverse' : ''}`}>
+                        <span className={`text-xs font-bold ${speaker.color} ${speaker.text} px-2 py-0.5 rounded-full`}>
+                          {speaker.name}
+                        </span>
+                        <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
+                      </div>
+
+                      {/* Balão de mensagem */}
+                      <div
+                        className={`
+                          relative px-4 py-2 rounded-2xl
+                          ${isRight
+                            ? `${speaker.color} ${speaker.text} rounded-br-md`
+                            : `${speaker.color} ${speaker.text} rounded-bl-md`
+                          }
+                        `}
+                      >
+                        <p className="text-sm leading-relaxed">
+                          {group.texts.join(' ')}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-gray-200 text-sm leading-relaxed">
-                      {group.texts.join(' ')}
-                    </p>
                   </div>
                 )
               })
