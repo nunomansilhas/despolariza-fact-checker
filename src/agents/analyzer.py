@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ChapterAnalysis:
-    """Análise de um capítulo."""
+class ChapterInsights:
+    """Insights extraídos de um capítulo pelo LLM."""
     chapter_id: str
     chapter_title: str
     summary: str
@@ -120,13 +120,13 @@ class AnalyzerAgent:
             logger.warning(f"JSON parse error: {e}")
             return {}
 
-    async def analyze_chapter(self, chapter_id: str, chapter_title: str, text: str) -> ChapterAnalysis:
+    async def analyze_chapter(self, chapter_id: str, chapter_title: str, text: str) -> ChapterInsights:
         """Analisa um capítulo e extrai insights."""
         if not self._client:
             raise RuntimeError("Analyzer not started")
 
         if not text.strip():
-            return ChapterAnalysis(
+            return ChapterInsights(
                 chapter_id=chapter_id,
                 chapter_title=chapter_title,
                 summary="Sem conteúdo para analisar.",
@@ -150,7 +150,7 @@ class AnalyzerAgent:
         response = await self._client.generate(prompt)
         data = self._extract_json(response)
 
-        analysis = ChapterAnalysis(
+        analysis = ChapterInsights(
             chapter_id=chapter_id,
             chapter_title=chapter_title,
             summary=data.get("resumo", "Não foi possível gerar resumo."),
@@ -164,7 +164,7 @@ class AnalyzerAgent:
         return analysis
 
     async def analyze_all_chapters(self, chapters: list[dict], transcripts: list[dict],
-                                    on_progress=None) -> list[ChapterAnalysis]:
+                                    on_progress=None) -> list[ChapterInsights]:
         """Analisa todos os capítulos."""
         results = []
 
@@ -191,7 +191,7 @@ class AnalyzerAgent:
 
             except Exception as e:
                 logger.error(f"Error analyzing chapter {chapter.get('title')}: {e}")
-                results.append(ChapterAnalysis(
+                results.append(ChapterInsights(
                     chapter_id=chapter.get("id", f"ch_{i}"),
                     chapter_title=chapter.get("title", f"Capítulo {i+1}"),
                     summary=f"Erro na análise: {str(e)}",

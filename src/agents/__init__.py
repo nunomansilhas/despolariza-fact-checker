@@ -4,6 +4,7 @@ from .base import BaseAgent, AgentStatus
 from .transcriber import TranscriberAgent
 from .fact_checker import FactCheckerAgent
 from .rhetoric import RhetoricAnalyzerAgent
+from .analyzer import AnalyzerAgent, ChapterInsights
 
 __all__ = [
     "BaseAgent",
@@ -11,4 +12,6 @@ __all__ = [
     "TranscriberAgent",
     "FactCheckerAgent",
     "RhetoricAnalyzerAgent",
+    "AnalyzerAgent",
+    "ChapterInsights",
 ]
