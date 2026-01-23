@@ -224,13 +224,24 @@ class TranscriberAgent(BaseAgent):
 
         # Diarização
         if self._diarize_model:
-            # pyannote Pipeline espera ficheiro de áudio, não array
-            diarize_segments = self._diarize_model(
+            # pyannote Pipeline retorna Annotation, precisamos converter para DataFrame
+            import pandas as pd
+
+            diarization = self._diarize_model(
                 audio_path,
                 min_speakers=settings.min_speakers,
                 max_speakers=settings.max_speakers
             )
-            result = whisperx.assign_word_speakers(diarize_segments, result)
+
+            # Converter Annotation para DataFrame no formato que whisperx espera
+            diarize_segments = pd.DataFrame([
+                {"start": segment.start, "end": segment.end, "speaker": speaker}
+                for segment, _, speaker in diarization.itertracks(yield_label=True)
+            ])
+
+            if not diarize_segments.empty:
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+                logger.info(f"Diarization found {len(diarize_segments)} speaker segments")
 
         # Converter para nosso formato
         segments = []
