@@ -528,7 +528,18 @@ async def run_poligrafo(request: Request):
         raise HTTPException(status_code=500, detail="Orchestrator not initialized")
 
     data = await request.json()
-    speaker_names = data.get("speaker_names", ["Entrevistador", "Convidado"])
+
+    # Novo formato com contexto por speaker
+    speakers_data = data.get("speakers", [])
+    if speakers_data:
+        speakers = [
+            {"name": s.get("name", "Speaker"), "context": s.get("context", "")}
+            for s in speakers_data
+        ]
+    else:
+        # Fallback para formato antigo
+        speaker_names = data.get("speaker_names", ["Entrevistador", "Convidado"])
+        speakers = [{"name": n, "context": ""} for n in speaker_names]
 
     # Obter transcrição
     session = orchestrator.get_session()
@@ -573,7 +584,7 @@ async def run_poligrafo(request: Request):
         result = await poligrafo.analyze_full(
             full_transcript,
             chapters,
-            speaker_names,
+            speakers,
             on_progress
         )
 

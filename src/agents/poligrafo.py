@@ -124,14 +124,29 @@ class PoligrafoAgent(BaseAgent):
         self,
         transcript: str,
         chapters: list[dict],
-        speaker_names: list[str]
+        speakers: list[dict]
     ) -> list[dict]:
         """
         Separa a transcrição por speaker.
 
+        Args:
+            transcript: Texto completo da transcrição
+            chapters: Lista de capítulos
+            speakers: Lista de speakers com nome e contexto
+                      [{"name": "Tomás", "context": "Host do podcast..."}, ...]
+
         Returns:
             Lista de segmentos: [{"speaker": "Nome", "text": "...", "chapter": "..."}]
         """
+        # Construir descrição detalhada dos speakers
+        speakers_description = ""
+        speaker_names = []
+        for i, s in enumerate(speakers):
+            name = s.get("name", f"Speaker {i+1}")
+            context = s.get("context", "")
+            speaker_names.append(name)
+            speakers_description += f"\n{name.upper()}:\n{context if context else 'Sem descrição adicional'}\n"
+
         speakers_str = ", ".join(speaker_names)
 
         # Preparar contexto dos capítulos
@@ -140,17 +155,25 @@ class PoligrafoAgent(BaseAgent):
             for ch in chapters[:10]  # Primeiros 10 para contexto
         ])
 
-        prompt = f"""Analisa esta transcrição de podcast e separa por speaker.
+        prompt = f"""Analisa esta transcrição de um podcast e separa por speaker.
 
-SPEAKERS: {speakers_str}
+=== SPEAKERS ===
+{speakers_description}
 
-CAPÍTULOS:
+=== CAPÍTULOS ===
 {chapters_context}
 
-REGRAS:
-1. O entrevistador/host faz perguntas curtas e dirige a conversa
-2. O convidado dá respostas longas e opiniões detalhadas
-3. Identifica mudanças de speaker por:
+=== INSTRUÇÕES ===
+1. Usa o CONTEXTO de cada speaker para identificar quem está a falar
+2. O entrevistador tipicamente:
+   - Faz perguntas
+   - Introduz temas novos
+   - Faz comentários curtos como "pois", "sim", "interessante"
+3. O convidado tipicamente:
+   - Dá respostas longas e elaboradas
+   - Partilha opiniões e análises
+   - Conta histórias ou dá exemplos
+4. Identifica mudanças de speaker por:
    - Perguntas vs respostas
    - Mudança de tom/assunto
    - Frases como "sim", "pois", "exato" são do ouvinte
@@ -297,7 +320,7 @@ RESPOSTA JSON:"""
         self,
         transcript: str,
         chapters: list[dict],
-        speaker_names: list[str],
+        speakers: list[dict],
         on_progress: callable = None
     ) -> dict:
         """
@@ -306,7 +329,8 @@ RESPOSTA JSON:"""
         Args:
             transcript: Texto completo da transcrição
             chapters: Lista de capítulos
-            speaker_names: Nomes dos speakers
+            speakers: Lista de speakers com nome e contexto
+                      [{"name": "...", "context": "..."}, ...]
             on_progress: Callback para progresso (stage, current, total)
 
         Returns:
@@ -317,6 +341,9 @@ RESPOSTA JSON:"""
                 "summary": {...}
             }
         """
+        # Extrair nomes para compatibilidade
+        speaker_names = [s.get("name", "Speaker") for s in speakers]
+
         result = {
             "separated_transcript": [],
             "claims": [],
@@ -330,7 +357,7 @@ RESPOSTA JSON:"""
 
         logger.info("Step 1/3: Separating by speaker...")
         result["separated_transcript"] = await self.separate_speakers(
-            transcript, chapters, speaker_names
+            transcript, chapters, speakers
         )
 
         # 2. Extrair claims

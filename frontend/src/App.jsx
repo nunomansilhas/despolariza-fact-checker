@@ -101,7 +101,12 @@ export default function App() {
   const [speakerNames, setSpeakerNames] = useState(() => {
     // Carregar nomes guardados do localStorage
     const saved = localStorage.getItem('speakerNames')
-    return saved ? JSON.parse(saved) : { speaker0: 'Entrevistador', speaker1: 'Convidado' }
+    return saved ? JSON.parse(saved) : {
+      speaker0: 'Tomás',
+      speaker0_context: 'Host do podcast Despolariza-te. Faz perguntas diretas e provocadoras. Estilo informal, tuteia os convidados. Interrompe para clarificar ou desafiar pontos.',
+      speaker1: 'Convidado',
+      speaker1_context: 'Convidado do podcast. Dá respostas longas e elaboradas. Partilha opiniões, experiências e análises detalhadas.'
+    }
   })
   const [showSpeakerConfig, setShowSpeakerConfig] = useState(false)
   const [identifiedSpeakers, setIdentifiedSpeakers] = useState([]) // Segmentos com speakers identificados por AI
@@ -369,7 +374,10 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          speaker_names: [speakerNames.speaker0, speakerNames.speaker1]
+          speakers: [
+            { name: speakerNames.speaker0, context: speakerNames.speaker0_context || '' },
+            { name: speakerNames.speaker1, context: speakerNames.speaker1_context || '' }
+          ]
         })
       })
       if (!res.ok) throw new Error((await res.json()).detail || 'Erro no Polígrafo')
@@ -531,31 +539,53 @@ export default function App() {
         {/* Speaker config */}
         {showSpeakerConfig && (
           <div className="mt-3 p-3 bg-gray-800 rounded">
-            <div className="text-sm font-medium mb-2 text-gray-300">👥 Nomes dos Speakers</div>
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <label className="text-xs text-gray-500 block mb-1">Speaker 1 (esquerda)</label>
+            <div className="text-sm font-medium mb-2 text-gray-300">👥 Configuração dos Speakers</div>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Speaker 1 - Entrevistador */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-600 rounded-full"></div>
+                  <label className="text-xs text-gray-400 font-medium">ENTREVISTADOR</label>
+                </div>
                 <input
                   type="text"
                   value={speakerNames.speaker0}
                   onChange={e => setSpeakerNames(prev => ({ ...prev, speaker0: e.target.value }))}
-                  placeholder="Ex: Daniel Oliveira"
+                  placeholder="Nome (ex: Tomás)"
                   className="w-full px-3 py-1.5 bg-gray-900 rounded border border-blue-600/50 focus:border-blue-500 focus:outline-none text-sm"
                 />
+                <textarea
+                  value={speakerNames.speaker0_context || ''}
+                  onChange={e => setSpeakerNames(prev => ({ ...prev, speaker0_context: e.target.value }))}
+                  placeholder="Contexto: quem é, estilo de falar, características..."
+                  rows={3}
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-gray-700 focus:border-blue-500 focus:outline-none text-xs resize-none"
+                />
               </div>
-              <div className="flex-1">
-                <label className="text-xs text-gray-500 block mb-1">Speaker 2 (direita)</label>
+              {/* Speaker 2 - Convidado */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-600 rounded-full"></div>
+                  <label className="text-xs text-gray-400 font-medium">CONVIDADO</label>
+                </div>
                 <input
                   type="text"
                   value={speakerNames.speaker1}
                   onChange={e => setSpeakerNames(prev => ({ ...prev, speaker1: e.target.value }))}
-                  placeholder="Ex: Nome do Convidado"
+                  placeholder="Nome (ex: Daniel Oliveira)"
                   className="w-full px-3 py-1.5 bg-gray-900 rounded border border-green-600/50 focus:border-green-500 focus:outline-none text-sm"
+                />
+                <textarea
+                  value={speakerNames.speaker1_context || ''}
+                  onChange={e => setSpeakerNames(prev => ({ ...prev, speaker1_context: e.target.value }))}
+                  placeholder="Contexto: quem é, profissão, posições políticas, estilo..."
+                  rows={3}
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-gray-700 focus:border-green-500 focus:outline-none text-xs resize-none"
                 />
               </div>
             </div>
             <div className="text-xs text-gray-500 mt-2">
-              💡 Os nomes são guardados localmente para futuras sessões
+              💡 O contexto ajuda o AI a identificar quem está a falar baseado no conteúdo
             </div>
           </div>
         )}
