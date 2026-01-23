@@ -10,6 +10,7 @@ from uuid import uuid4
 import logging
 
 from .capture.youtube import YouTubeCapture, VideoInfo, AudioChunk, cleanup_old_temp_dirs
+from .capture.local_audio import LocalAudioCapture
 from .capture.audio_buffer import AudioBuffer
 from .agents.transcriber import TranscriberAgent
 from .agents.fact_checker import FactCheckerAgent
@@ -185,14 +186,22 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Callback error for {event}: {e}")
 
-    async def start_session(self, url: str, custom_chapters: list[dict] = None) -> SessionState:
+    async def start_session(
+        self,
+        url: str,
+        custom_chapters: list[dict] = None,
+        local_audio: str = None,
+        video_title: str = None
+    ) -> SessionState:
         """
         Inicia uma nova sessão de análise.
 
         Args:
-            url: URL do vídeo do YouTube
+            url: URL do vídeo do YouTube (opcional se usar local_audio)
             custom_chapters: Lista de capítulos customizados (opcional)
                             Formato: [{"id": "ch_0", "title": "...", "start_time": 0, "end_time": 60}, ...]
+            local_audio: Path para ficheiro de áudio local (opcional)
+            video_title: Título para áudio local (opcional)
 
         Returns:
             SessionState com informação da sessão
@@ -203,16 +212,49 @@ class Orchestrator:
         # Criar sessão
         self._session = SessionState(
             id=str(uuid4()),
-            url=url
+            url=url or "local"
         )
 
-        try:
-            # Notificar frontend do status
-            await self._notify("status", {"stage": "fetching_info", "message": "A obter informação do vídeo..."})
+        # Verificar se usar áudio local
+        use_local = local_audio or settings.local_audio_file
+        local_path = Path(use_local) if use_local else None
 
-            # Iniciar captura
-            self._capture = YouTubeCapture(url)
-            self._session.video_info = await self._capture.get_video_info()
+        try:
+            if local_path and local_path.exists():
+                # Usar áudio local
+                await self._notify("status", {"stage": "loading_local", "message": "A carregar áudio local..."})
+                logger.info(f"Using local audio: {local_path}")
+
+                # Obter duração do áudio com ffprobe
+                import subprocess
+                result = subprocess.run([
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(local_path)
+                ], capture_output=True, text=True)
+
+                duration = float(result.stdout.strip()) if result.returncode == 0 else 0
+
+                # Criar VideoInfo fake para áudio local
+                self._session.video_info = VideoInfo(
+                    id="local",
+                    title=video_title or local_path.stem,
+                    channel="Local",
+                    duration=duration,
+                    description="",
+                    chapters=[]
+                )
+
+                # Criar captura fake que usa o ficheiro local
+                self._capture = LocalAudioCapture(local_path, self._session.video_info)
+            else:
+                # Usar YouTube
+                await self._notify("status", {"stage": "fetching_info", "message": "A obter informação do vídeo..."})
+
+                # Iniciar captura
+                self._capture = YouTubeCapture(url)
+                self._session.video_info = await self._capture.get_video_info()
 
             # Usar capítulos customizados se fornecidos
             if custom_chapters:

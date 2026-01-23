@@ -106,6 +106,9 @@ export default function App() {
   const [showSpeakerConfig, setShowSpeakerConfig] = useState(false)
   const [identifiedSpeakers, setIdentifiedSpeakers] = useState([]) // Segmentos com speakers identificados por AI
   const [identifyingProgress, setIdentifyingProgress] = useState(null) // { current, total }
+  const [showLocalAudio, setShowLocalAudio] = useState(false)
+  const [localAudioPath, setLocalAudioPath] = useState(() => localStorage.getItem('localAudioPath') || '')
+  const [localAudioTitle, setLocalAudioTitle] = useState('')
 
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
@@ -251,20 +254,32 @@ export default function App() {
 
   // Handlers
   const handleStart = async () => {
-    if (!url.trim()) return
+    // Pode usar URL do YouTube OU áudio local
+    if (!url.trim() && !localAudioPath.trim()) return
     setLoading(true)
     setError(null)
     setTranscripts([])
+    setIdentifiedSpeakers([])
     setStatus({ stage: 'fetching_info', message: 'A iniciar...' })
 
     const customChapters = cronologiaText ? parseCronologia(cronologiaText) : null
     if (customChapters?.length) setChapters(customChapters)
 
+    // Guardar path do áudio local para futuras sessões
+    if (localAudioPath) {
+      localStorage.setItem('localAudioPath', localAudioPath)
+    }
+
     try {
       const res = await fetch('/api/session/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, custom_chapters: customChapters })
+        body: JSON.stringify({
+          url: url || '',
+          custom_chapters: customChapters,
+          local_audio: localAudioPath || null,
+          video_title: localAudioTitle || null
+        })
       })
       if (!res.ok) throw new Error((await res.json()).detail || 'Erro')
       const data = await res.json()
@@ -401,6 +416,14 @@ export default function App() {
             👥
           </button>
 
+          <button
+            onClick={() => setShowLocalAudio(!showLocalAudio)}
+            className={`px-3 py-1.5 rounded text-sm ${localAudioPath ? 'bg-orange-600' : 'bg-gray-800 hover:bg-gray-700'}`}
+            title="Usar áudio local"
+          >
+            📁
+          </button>
+
           {session?.status === 'running' ? (
             <button onClick={handleStop} className="px-4 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium">
               Parar
@@ -408,10 +431,10 @@ export default function App() {
           ) : (
             <button
               onClick={handleStart}
-              disabled={loading || !url.trim()}
+              disabled={loading || (!url.trim() && !localAudioPath.trim())}
               className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm font-medium"
             >
-              {loading ? '...' : 'Iniciar'}
+              {loading ? '...' : (localAudioPath ? '▶️ Local' : 'Iniciar')}
             </button>
           )}
 
@@ -490,6 +513,46 @@ export default function App() {
             <div className="text-xs text-gray-500 mt-2">
               💡 Os nomes são guardados localmente para futuras sessões
             </div>
+          </div>
+        )}
+
+        {/* Local audio config */}
+        {showLocalAudio && (
+          <div className="mt-3 p-3 bg-gray-800 rounded">
+            <div className="text-sm font-medium mb-2 text-gray-300">📁 Áudio Local</div>
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Caminho do ficheiro (mp3, wav, etc)</label>
+                <input
+                  type="text"
+                  value={localAudioPath}
+                  onChange={e => setLocalAudioPath(e.target.value)}
+                  placeholder="C:\Users\...\audio.mp3 ou /home/.../audio.wav"
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-orange-600/50 focus:border-orange-500 focus:outline-none text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Título (opcional)</label>
+                <input
+                  type="text"
+                  value={localAudioTitle}
+                  onChange={e => setLocalAudioTitle(e.target.value)}
+                  placeholder="Nome do podcast/episódio"
+                  className="w-full px-3 py-1.5 bg-gray-900 rounded border border-gray-700 focus:border-orange-500 focus:outline-none text-sm"
+                />
+              </div>
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              💡 Usa isto para evitar descarregar o mesmo vídeo várias vezes. O caminho é guardado.
+            </div>
+            {localAudioPath && (
+              <button
+                onClick={() => { setLocalAudioPath(''); setLocalAudioTitle(''); localStorage.removeItem('localAudioPath') }}
+                className="mt-2 text-xs text-red-400 hover:text-red-300"
+              >
+                ✕ Limpar áudio local
+              </button>
+            )}
           </div>
         )}
 

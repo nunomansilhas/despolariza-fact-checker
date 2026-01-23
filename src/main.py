@@ -74,8 +74,10 @@ class ChapterInput(BaseModel):
 
 
 class StartSessionRequest(BaseModel):
-    url: str
+    url: str = ""  # URL do YouTube (opcional se usar local_audio)
     custom_chapters: Optional[list[ChapterInput]] = None
+    local_audio: Optional[str] = None  # Path para ficheiro de áudio local
+    video_title: Optional[str] = None  # Título para áudio local
 
 
 class SessionResponse(BaseModel):
@@ -167,7 +169,12 @@ async def start_session(request: StartSessionRequest):
                 for ch in request.custom_chapters
             ]
 
-        session = await orchestrator.start_session(request.url, custom_chapters=custom_chapters)
+        session = await orchestrator.start_session(
+            request.url,
+            custom_chapters=custom_chapters,
+            local_audio=request.local_audio,
+            video_title=request.video_title
+        )
 
         # Configurar broadcasts via WebSocket
         async def broadcast(event: str, data):

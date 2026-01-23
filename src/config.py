@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     audio_cache_enabled: bool = True  # Ativar cache de áudio
     audio_cache_dir: str = ""  # Pasta para cache de áudio (deixar vazio para usar ~/.despolariza/audio_cache)
 
+    # Audio local - usar ficheiro de áudio local em vez de YouTube
+    local_audio_file: str = ""  # Path para ficheiro de áudio local (mp3, wav, etc)
+
     # Agents - Anthropic (opcional, fallback)
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
