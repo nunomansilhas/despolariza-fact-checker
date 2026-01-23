@@ -29,6 +29,13 @@ class SpeakerIdentifierAgent(BaseAgent):
             await self._client.aclose()
         await super().stop()
 
+    async def process(self, item: dict) -> list[dict]:
+        """Processa um item (transcript) e identifica speakers."""
+        transcript_text = item.get("text", "")
+        speaker_names = item.get("speaker_names", ["Entrevistador", "Convidado"])
+        context = item.get("context", "")
+        return await self.identify_speakers(transcript_text, speaker_names, context)
+
     async def identify_speakers(
         self,
         transcript_text: str,
