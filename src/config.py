@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     audio_sample_rate: int = 16000  # Hz (Whisper espera 16kHz)
     audio_buffer_size: int = 10  # número de chunks em buffer
 
+    # YouTube - Cookies para contornar verificação de bot
+    # Browsers suportados: chrome, firefox, edge, opera, brave, chromium, safari
+    yt_cookies_browser: str = ""  # Ex: "chrome", "firefox", "edge"
+    yt_cookies_file: str = ""  # Alternativa: path para ficheiro cookies.txt
+
     # Agents - Anthropic (opcional, fallback)
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"

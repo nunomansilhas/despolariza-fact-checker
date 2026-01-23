@@ -16,8 +16,22 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 # Usar python -m yt_dlp para compatibilidade com Windows
-# Adicionar --js-runtimes node para contornar restrições do YouTube
-YT_DLP_CMD = [sys.executable, "-m", "yt_dlp", "--js-runtimes", "node"]
+YT_DLP_BASE_CMD = [sys.executable, "-m", "yt_dlp"]
+
+
+def get_yt_dlp_cmd():
+    """Constrói o comando yt-dlp com opções de cookies se configuradas."""
+    cmd = YT_DLP_BASE_CMD.copy()
+
+    # Adicionar cookies do browser se configurado
+    if settings.yt_cookies_browser:
+        cmd.extend(["--cookies-from-browser", settings.yt_cookies_browser])
+        logger.info(f"Using cookies from browser: {settings.yt_cookies_browser}")
+    elif settings.yt_cookies_file:
+        cmd.extend(["--cookies", settings.yt_cookies_file])
+        logger.info(f"Using cookies file: {settings.yt_cookies_file}")
+
+    return cmd
 
 
 def cleanup_old_temp_dirs():
@@ -84,7 +98,7 @@ class YouTubeCapture:
 
         logger.info(f"Fetching video info for: {self.url}")
 
-        cmd = YT_DLP_CMD + [
+        cmd = get_yt_dlp_cmd() + [
             "--dump-json",
             "--no-download",
             self.url
@@ -148,7 +162,7 @@ class YouTubeCapture:
         logger.info(f"Downloading audio to: {output_path}")
 
         # yt-dlp para extrair áudio + ffmpeg para converter para WAV 16kHz
-        cmd = YT_DLP_CMD + [
+        cmd = get_yt_dlp_cmd() + [
             "-x",  # Extract audio
             "--audio-format", "wav",
             "--postprocessor-args",
