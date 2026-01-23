@@ -16,7 +16,8 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 # Usar python -m yt_dlp para compatibilidade com Windows
-YT_DLP_CMD = [sys.executable, "-m", "yt_dlp"]
+# Adicionar --js-runtimes nodejs para contornar restrições do YouTube
+YT_DLP_CMD = [sys.executable, "-m", "yt_dlp", "--js-runtimes", "nodejs"]
 
 
 def cleanup_old_temp_dirs():
