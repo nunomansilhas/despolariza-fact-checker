@@ -399,6 +399,114 @@ Baseia-te em factos conhecidos. Se não tiveres certeza, responde "inconclusive"
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/identify-speakers")
+async def identify_speakers(request: Request):
+    """Usa AI para identificar speakers baseado no contexto do texto."""
+    data = await request.json()
+    speaker_names = data.get("speaker_names", ["Entrevistador", "Convidado"])
+    chapter_id = data.get("chapter_id")  # Opcional: processar apenas um capítulo
+
+    if not orchestrator:
+        raise HTTPException(status_code=500, detail="Orchestrator not initialized")
+
+    session = orchestrator.get_session_state()
+    if not session:
+        # Tentar carregar do autosave
+        autosave = orchestrator.load_autosave()
+        if not autosave:
+            raise HTTPException(status_code=404, detail="No session data")
+        transcripts = autosave.get("transcripts", [])
+        chapters = autosave.get("chapters", [])
+    else:
+        transcripts = [_serialize(t) for t in session.transcripts]
+        chapters = [_serialize(c) for c in session.chapters]
+
+    if not transcripts:
+        raise HTTPException(status_code=400, detail="No transcripts to process")
+
+    # Criar agente
+    from .agents.speaker_identifier import SpeakerIdentifierAgent
+    identifier = SpeakerIdentifierAgent()
+    await identifier.start()
+
+    try:
+        results = []
+
+        # Se chapter_id especificado, processar apenas esse capítulo
+        if chapter_id:
+            chapter = next((c for c in chapters if c.get("id") == chapter_id), None)
+            if not chapter:
+                raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+            # Filtrar transcripts do capítulo
+            chapter_start = chapter.get("start_time", 0)
+            chapter_end = chapter.get("end_time", float("inf"))
+            chapter_transcripts = [
+                t for t in transcripts
+                if t.get("start_time", 0) >= chapter_start and t.get("start_time", 0) < chapter_end
+            ]
+
+            chapter_text = " ".join(t.get("text", "") for t in chapter_transcripts)
+            segments = await identifier.process_chapter(
+                chapter_text,
+                speaker_names,
+                chapter.get("title", "")
+            )
+            results.append({
+                "chapter_id": chapter_id,
+                "chapter_title": chapter.get("title", ""),
+                "segments": segments
+            })
+        else:
+            # Processar todos os capítulos
+            for chapter in chapters:
+                chapter_start = chapter.get("start_time", 0)
+                chapter_end = chapter.get("end_time", float("inf"))
+                chapter_transcripts = [
+                    t for t in transcripts
+                    if t.get("start_time", 0) >= chapter_start and t.get("start_time", 0) < chapter_end
+                ]
+
+                chapter_text = " ".join(t.get("text", "") for t in chapter_transcripts)
+
+                if chapter_text.strip():
+                    segments = await identifier.process_chapter(
+                        chapter_text,
+                        speaker_names,
+                        chapter.get("title", "")
+                    )
+                    results.append({
+                        "chapter_id": chapter.get("id"),
+                        "chapter_title": chapter.get("title", ""),
+                        "segments": segments
+                    })
+
+                # Broadcast progress
+                await broadcast_message({
+                    "type": "speaker_identification_progress",
+                    "data": {
+                        "chapter": chapter.get("title"),
+                        "processed": len(results),
+                        "total": len(chapters)
+                    }
+                })
+
+        # Broadcast complete
+        await broadcast_message({
+            "type": "speaker_identification_complete",
+            "data": {"chapters": results}
+        })
+
+        return {
+            "status": "complete",
+            "speaker_names": speaker_names,
+            "chapters": results
+        }
+
+    finally:
+        await identifier.stop()
+
+
 @app.get("/api/export")
 async def export_analysis():
     """Exporta análise em Markdown."""

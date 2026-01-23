@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     whisper_language: str = "pt"
 
     # Speaker Diarization (WhisperX)
-    enable_diarization: bool = True  # Identificar diferentes speakers
+    enable_diarization: bool = False  # Diarização por voz (desativado - usar AI para identificar)
     hf_token: str = ""  # HuggingFace token para pyannote (diarização)
     min_speakers: int = 2  # Número mínimo de speakers esperados (podcast = 2)
     max_speakers: int = 2  # Número máximo de speakers esperados (podcast = 2)

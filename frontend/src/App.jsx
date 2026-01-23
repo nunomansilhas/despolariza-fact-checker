@@ -104,12 +104,32 @@ export default function App() {
     return saved ? JSON.parse(saved) : { speaker0: 'Entrevistador', speaker1: 'Convidado' }
   })
   const [showSpeakerConfig, setShowSpeakerConfig] = useState(false)
+  const [identifiedSpeakers, setIdentifiedSpeakers] = useState([]) // Segmentos com speakers identificados por AI
+  const [identifyingProgress, setIdentifyingProgress] = useState(null) // { current, total }
 
   const scrollRef = useRef(null)
   const { messages, isConnected } = useWebSocket(`ws://${window.location.hostname}:3068/ws`)
 
   // Função para obter info do speaker com nomes customizados
-  const getSpeaker = useCallback((id) => {
+  const getSpeaker = useCallback((id, speakerName = null) => {
+    // Se temos nome direto do AI, usar esse
+    if (speakerName) {
+      if (speakerName === 'AMBOS') {
+        return { color: 'bg-yellow-600', text: 'text-white', name: '🗣️ Ambos', side: 'center' }
+      }
+      if (speakerName === speakerNames.speaker0) {
+        return { ...DEFAULT_SPEAKERS['SPEAKER_00'], name: speakerName }
+      }
+      if (speakerName === speakerNames.speaker1) {
+        return { ...DEFAULT_SPEAKERS['SPEAKER_01'], name: speakerName }
+      }
+      return { color: 'bg-gray-600', text: 'text-white', name: speakerName, side: 'left' }
+    }
+
+    // Fallback para IDs de speaker
+    if (id === 'AMBOS') {
+      return { color: 'bg-yellow-600', text: 'text-white', name: '🗣️ Ambos', side: 'center' }
+    }
     const base = DEFAULT_SPEAKERS[id] || { color: 'bg-gray-600', text: 'text-white', name: id || 'Desconhecido', side: 'left' }
     if (id === 'SPEAKER_00') return { ...base, name: speakerNames.speaker0 || base.name }
     if (id === 'SPEAKER_01') return { ...base, name: speakerNames.speaker1 || base.name }
@@ -162,6 +182,11 @@ export default function App() {
     if (msg.type === 'error') { setError(msg.message || msg.data); setStatus(null) }
     if (msg.type === 'analysis_progress') setAnalysisProgress({ current: msg.data.current, total: msg.data.total })
     if (msg.type === 'analysis_complete') { setAnalyses(msg.data.chapters); setAnalyzing(false); setActiveTab('analise') }
+    if (msg.type === 'speaker_identification_progress') setIdentifyingProgress({ current: msg.data.processed, total: msg.data.total })
+    if (msg.type === 'speaker_identification_complete') {
+      setIdentifiedSpeakers(msg.data.chapters)
+      setIdentifyingProgress(null)
+    }
   }, [messages])
 
   // Auto-scroll suave
@@ -174,8 +199,32 @@ export default function App() {
     }
   }, [transcripts, session?.status])
 
-  // Agrupar por speaker
+  // Agrupar por speaker - usar AI-identified se disponível, senão voice diarization
   const conversation = useMemo(() => {
+    // Se temos speakers identificados por AI, usar esses
+    if (identifiedSpeakers.length > 0) {
+      const groups = []
+      for (const chapter of identifiedSpeakers) {
+        for (const seg of chapter.segments || []) {
+          // Mapear nome do speaker para ID
+          let speakerId = null
+          if (seg.speaker === speakerNames.speaker0) speakerId = 'SPEAKER_00'
+          else if (seg.speaker === speakerNames.speaker1) speakerId = 'SPEAKER_01'
+          else if (seg.speaker === 'AMBOS') speakerId = 'AMBOS'
+
+          groups.push({
+            speaker: speakerId,
+            speakerName: seg.speaker, // Nome direto do AI
+            texts: [seg.text],
+            startTime: 0, // AI não dá timestamps exatos
+            chapter: chapter.chapter_title
+          })
+        }
+      }
+      return groups
+    }
+
+    // Fallback: voice diarization ou sem diarização
     const groups = []
     let current = null
 
@@ -190,7 +239,7 @@ export default function App() {
       }
     }
     return groups
-  }, [transcripts])
+  }, [transcripts, identifiedSpeakers, speakerNames])
 
   // Filtrar por capítulo
   const filteredConversation = useMemo(() => {
@@ -262,6 +311,27 @@ export default function App() {
       setError(e.message)
     }
     setAnalyzing(false)
+  }
+
+  const handleIdentifySpeakers = async () => {
+    setIdentifyingProgress({ current: 0, total: chapters.length || 1 })
+    setError(null)
+
+    try {
+      const res = await fetch('/api/identify-speakers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speaker_names: [speakerNames.speaker0, speakerNames.speaker1]
+        })
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Erro na identificação')
+      const data = await res.json()
+      setIdentifiedSpeakers(data.chapters || [])
+    } catch (e) {
+      setError(e.message)
+    }
+    setIdentifyingProgress(null)
   }
 
   const handleVerifyClaim = async (claim, chapterTitle) => {
@@ -342,6 +412,17 @@ export default function App() {
               className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 rounded text-sm font-medium"
             >
               {loading ? '...' : 'Iniciar'}
+            </button>
+          )}
+
+          {transcripts.length > 0 && session?.status !== 'running' && (
+            <button
+              onClick={handleIdentifySpeakers}
+              disabled={identifyingProgress !== null}
+              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 rounded text-sm font-medium"
+              title="Identificar quem fala usando AI"
+            >
+              {identifyingProgress ? `🔄 ${identifyingProgress.current}/${identifyingProgress.total}` : '🎙️ ID Speakers'}
             </button>
           )}
 
@@ -493,30 +574,38 @@ export default function App() {
             ) : (
               <>
                 {filteredConversation.map((group, i) => {
-                  const speaker = getSpeaker(group.speaker)
+                  const speaker = getSpeaker(group.speaker, group.speakerName)
                   const isRight = speaker.side === 'right'
+                  const isCenter = speaker.side === 'center'
 
                   return (
                     <div
                       key={i}
-                      className={`flex ${isRight ? 'justify-end' : 'justify-start'} animate-fadeIn`}
+                      className={`flex ${isCenter ? 'justify-center' : isRight ? 'justify-end' : 'justify-start'} animate-fadeIn`}
                     >
-                      <div className={`max-w-[75%] ${isRight ? 'items-end' : 'items-start'} flex flex-col`}>
-                        {/* Nome e tempo */}
+                      <div className={`max-w-[75%] ${isCenter ? 'items-center' : isRight ? 'items-end' : 'items-start'} flex flex-col`}>
+                        {/* Nome e tempo/capítulo */}
                         <div className={`flex items-center gap-2 mb-1 ${isRight ? 'flex-row-reverse' : ''}`}>
                           <span className={`text-xs font-bold ${speaker.color} ${speaker.text} px-2 py-0.5 rounded-full`}>
                             {speaker.name}
                           </span>
-                          <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
+                          {group.startTime > 0 && (
+                            <span className="text-xs text-gray-500">{formatTime(group.startTime)}</span>
+                          )}
+                          {group.chapter && (
+                            <span className="text-xs text-purple-400">📑 {group.chapter}</span>
+                          )}
                         </div>
 
                         {/* Balão de mensagem */}
                         <div
                           className={`
                             relative px-4 py-2 rounded-2xl
-                            ${isRight
-                              ? `${speaker.color} ${speaker.text} rounded-br-md`
-                              : `${speaker.color} ${speaker.text} rounded-bl-md`
+                            ${isCenter
+                              ? `${speaker.color} ${speaker.text} rounded-lg`
+                              : isRight
+                                ? `${speaker.color} ${speaker.text} rounded-br-md`
+                                : `${speaker.color} ${speaker.text} rounded-bl-md`
                             }
                           `}
                         >
